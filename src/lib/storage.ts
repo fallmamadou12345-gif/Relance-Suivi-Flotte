@@ -2,14 +2,32 @@
 if (!window.storage) {
   window.storage = {
     get: async (key: string) => {
-      const val = localStorage.getItem(key);
-      return val ? { value: val } : null;
+      try {
+        const res = await fetch(`/api/storage/${key}`);
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        console.error("Storage GET error", e);
+        return null;
+      }
     },
     set: async (key: string, value: string) => {
-      localStorage.setItem(key, value);
+      try {
+        await fetch(`/api/storage/${key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value })
+        });
+      } catch (e) {
+        console.error("Storage SET error", e);
+      }
     },
     delete: async (key: string) => {
-      localStorage.removeItem(key);
+      try {
+        await fetch(`/api/storage/${key}`, { method: 'DELETE' });
+      } catch (e) {
+        console.error("Storage DELETE error", e);
+      }
     },
   };
 }
