@@ -375,10 +375,27 @@ export default function App() {
         <div style={{ maxWidth: 1400, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 0", flexWrap: "wrap", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 42, height: 42, background: "rgba(255,255,255,0.18)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🚕</div>
+              {/* Logo Sy Ndongo */}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                <div style={{ position: "relative", display: "flex", alignItems: "baseline" }}>
+                  <span style={{ color: "#60a5fa", fontSize: 26, fontWeight: 800, fontFamily: "sans-serif" }}>Sy</span>
+                  <span style={{ color: "#fff", fontSize: 26, fontWeight: 800, fontFamily: "sans-serif" }}>Ndongo</span>
+                  {/* Swoosh */}
+                  <svg style={{ position: "absolute", top: -8, left: 18, width: 80, height: 25, pointerEvents: "none" }} viewBox="0 0 100 30">
+                    <path d="M5,25 Q50,-10 95,10" fill="none" stroke="#facc15" strokeWidth="4" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div style={{ color: "#ef4444", fontSize: 18, fontWeight: 900, fontStyle: "italic", letterSpacing: "0.05em", marginTop: -4, textTransform: "uppercase" }}>
+                  Yango
+                </div>
+              </div>
+              
+              {/* Separator & Date */}
+              <div style={{ height: 32, width: 1, background: "rgba(255,255,255,0.2)", margin: "0 4px" }}></div>
+              
               <div>
-                <div style={{ fontWeight: 800, fontSize: 18 }}>Cellule de Relance & Suivi Flotte</div>
-                <div style={{ fontSize: 12, opacity: 0.6 }}>Yango · {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</div>
+                <div style={{ fontSize: 13, opacity: 0.8, fontWeight: 600, letterSpacing: "0.05em" }}>SUIVI FLOTTE</div>
+                <div style={{ fontSize: 12, opacity: 0.6 }}>{new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</div>
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

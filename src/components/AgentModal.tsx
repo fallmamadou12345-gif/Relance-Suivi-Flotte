@@ -1,19 +1,20 @@
 
 import { useState, useEffect, useRef } from "react";
-import { AGENTS } from "../constants";
 
 export default function AgentModal({ driver, onConfirm, onClose, currentAgent }: { driver: any, onConfirm: (data: any) => void, onClose: () => void, currentAgent: string }) {
   const [agent, setAgent] = useState(currentAgent || "");
-  const [custom, setCustom] = useState("");
-  const [comment, setComment] = useState(driver.commentaire || "");
+  const [comment, setComment] = useState(driver?.commentaire || "");
   const [outcome, setOutcome] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    // Focus textarea on mount
     setTimeout(() => inputRef.current?.focus(), 100);
   }, []);
 
-  const finalAgent = agent === "__custom__" ? custom.trim() : agent;
+  if (!driver) return null;
+
+  const finalAgent = agent;
   const canConfirm = finalAgent.trim() !== "";
 
   const submit = () => {
@@ -50,8 +51,8 @@ export default function AgentModal({ driver, onConfirm, onClose, currentAgent }:
         {/* Header */}
         <div style={{ background: "linear-gradient(135deg,#1e3a5f,#1d4ed8)", padding: "18px 24px", color: "#fff", flexShrink: 0 }}>
           <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 2, letterSpacing: "0.06em", fontWeight: 600 }}>APPEL ENREGISTRÉ · {new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</div>
-          <div style={{ fontWeight: 800, fontSize: 17 }}>{driver.nom}</div>
-          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 2 }}>{driver.tel} · Appel #{driver._callCount + 1}</div>
+          <div style={{ fontWeight: 800, fontSize: 17 }}>{driver.nom || "Chauffeur inconnu"}</div>
+          <div style={{ fontSize: 13, opacity: 0.75, marginTop: 2 }}>{driver.tel || "Sans numéro"} · Appel #{(driver._callCount || 0) + 1}</div>
         </div>
 
         <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 18, overflowY: "auto" }}>
@@ -60,7 +61,7 @@ export default function AgentModal({ driver, onConfirm, onClose, currentAgent }:
             <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#dbeafe", color: "#1d4ed8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>
             <div>
               <div style={{ fontSize: 11, color: "#1e40af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Agent Connecté</div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: "#1e3a5f" }}>{currentAgent}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: "#1e3a5f" }}>{currentAgent || "Inconnu"}</div>
             </div>
           </div>
 
@@ -90,6 +91,7 @@ export default function AgentModal({ driver, onConfirm, onClose, currentAgent }:
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", letterSpacing: "0.06em", marginBottom: 6 }}>📝 NOTE RAPIDE (optionnel)</div>
             <textarea
+              ref={inputRef}
               value={comment}
               onChange={e => setComment(e.target.value)}
               placeholder="Ex: Chauffeur dit qu'il reprend lundi, panne réparée..."
