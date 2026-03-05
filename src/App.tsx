@@ -292,16 +292,18 @@ export default function App() {
 
       // Merge: preserve existing call logs & comments by driver ID
       const prev = driversRef.current;
-      const prevMap = Object.fromEntries(prev.map(d => [d.id, d]));
-      const merged = parsed.map(d => {
-        const old = prevMap[d.id];
+      const prevMap = new Map(prev.map(d => [d.id, d]));
+      
+      const merged = parsed.map((d: any) => {
+        const old = prevMap.get(d.id);
         if (old) {
           return {
             ...d,
             _called: old._called,
-            _callCount: old._callCount,
-            _callLog: old._callLog,
-            commentaire: old.commentaire || d.commentaire
+            _callCount: old._callCount || 0,
+            _callLog: old._callLog || [],
+            // Keep old comment if it exists and is not empty, otherwise use new one
+            commentaire: (old.commentaire && old.commentaire.trim() !== "") ? old.commentaire : d.commentaire
           };
         }
         return d;
@@ -312,21 +314,33 @@ export default function App() {
         date: new Date().toLocaleString("fr-FR"),
         filename: file.name,
         count: merged.length,
-        rouge: merged.filter(d => d.zone === "ROUGE").length,
-        orange: merged.filter(d => d.zone === "ORANGE").length,
-        nouveau: merged.filter(d => d.zone === "NOUVEAU").length,
-        ok: merged.filter(d => d.zone === "OK").length,
-        fin_bloque: merged.filter(d => d.fin_bloque).length
+        rouge: merged.filter((d: any) => d.zone === "ROUGE").length,
+        orange: merged.filter((d: any) => d.zone === "ORANGE").length,
+        nouveau: merged.filter((d: any) => d.zone === "NOUVEAU").length,
+        ok: merged.filter((d: any) => d.zone === "OK").length,
+        fin_bloque: merged.filter((d: any) => d.fin_bloque).length
       };
 
       // Save history
       const newHist = [snap, ...importHistory].slice(0, 20);
       setImportHistory(newHist);
-      try { await window.storage.set("flotte_history", JSON.stringify(newHist)); } catch (e) { }
-
+      
+      // Update drivers state
       setDrivers(merged);
       setPage(1);
-      setTotalCalls(0);
+      // Do NOT reset totalCalls here, it should be cumulative or managed separately
+      // setTotalCalls(0); 
+
+      // PERSIST EVERYTHING IMMEDIATELY
+      (async () => {
+        try {
+          await window.storage.set("flotte_drivers", JSON.stringify(merged));
+          await window.storage.set("flotte_history", JSON.stringify(newHist));
+        } catch (e) {
+          console.error("Failed to save after import", e);
+          setToasts(prev => [...prev, { id: Date.now(), message: "Erreur de sauvegarde automatique !", type: "error" }]);
+        }
+      })();
     };
     reader.readAsText(file, "utf-8");
   };
