@@ -8,6 +8,8 @@ import AgentModal from "./components/AgentModal";
 import WhatsAppModal from "./components/WhatsAppModal";
 import DriverRow from "./components/DriverRow";
 import Toast from "./components/Toast";
+import LoginModal from "./components/LoginModal";
+import SettingsModal from "./components/SettingsModal";
 
 const PER_PAGE = 30;
 
@@ -18,6 +20,14 @@ export default function App() {
   const [modal, setModal] = useState<{ driverId: string } | null>(null);
   const [waModal, setWaModal] = useState<{ driverId: string } | null>(null);
   const [currentAgent, setCurrentAgent] = useState("");
+  const [userRole, setUserRole] = useState<"ADMIN" | "AGENT" | null>(null);
+  const [users, setUsers] = useState<any[]>([
+    { name: "ADMIN", code: "admin", role: "ADMIN" },
+    { name: "AGENT", code: "1234", role: "AGENT" }
+  ]);
+  const [agentSessionStart, setAgentSessionStart] = useState<number | null>(null);
+  const [agentSessions, setAgentSessions] = useState<any>({}); // { agent: { totalTime: ms, calls: number } }
+  const [globalLogs, setGlobalLogs] = useState<any[]>([]); // { time, agent, action, details }
   const [search, setSearch] = useState("");
   const [zoneFilter, setZoneFilter] = useState("ALL");
   const [responsableFilter, setResponsableFilter] = useState("ALL");
@@ -31,6 +41,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("pilotage");
   const [toasts, setToasts] = useState<any[]>([]);
   const [totalCalls, setTotalCalls] = useState(0);
+  const [storageMode, setStorageMode] = useState<"cloud" | "local" | "unknown">("unknown");
+  const [showSettings, setShowSettings] = useState(false);
   
   const driversRef = useRef(drivers);
   driversRef.current = drivers;
@@ -52,8 +64,27 @@ export default function App() {
       } catch (e) { }
 
       try {
+        const u = await window.storage.get("flotte_users");
+        if (u && u.value) setUsers(JSON.parse(u.value));
+      } catch (e) { }
+
+      try {
         const ag = await window.storage.get("flotte_agent");
-        if (ag && ag.value) setCurrentAgent(ag.value);
+        if (ag && ag.value) {
+          // Don't auto-login, force re-login for session tracking, but maybe remember last
+          // Actually, let's clear currentAgent on refresh to force login and session start
+          // setCurrentAgent(ag.value); 
+        }
+      } catch (e) { }
+
+      try {
+        const sess = await window.storage.get("flotte_sessions");
+        if (sess && sess.value) setAgentSessions(JSON.parse(sess.value));
+      } catch (e) { }
+
+      try {
+        const logs = await window.storage.get("flotte_logs");
+        if (logs && logs.value) setGlobalLogs(JSON.parse(logs.value));
       } catch (e) { }
 
       try {
@@ -62,24 +93,37 @@ export default function App() {
       } catch (e) { }
 
       setStorageReady(true);
+      setStorageMode(window.storage.mode);
     })();
   }, []);
 
-  // SAVE drivers whenever they change (debounced)
-  const saveTimer = useRef<any>(null);
+  // SAVE sessions & logs
   useEffect(() => {
     if (!storageReady) return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try { await window.storage.set("flotte_drivers", JSON.stringify(drivers)); } catch (e) { }
-    }, 800);
-  }, [drivers, storageReady]);
+    const save = async () => {
+      try { await window.storage.set("flotte_sessions", JSON.stringify(agentSessions)); } catch (e) { }
+      try { await window.storage.set("flotte_logs", JSON.stringify(globalLogs)); } catch (e) { }
+      try { await window.storage.set("flotte_users", JSON.stringify(users)); } catch (e) { }
+    };
+    const t = setTimeout(save, 2000);
+    return () => clearTimeout(t);
+  }, [agentSessions, globalLogs, storageReady]);
 
-  // SAVE agent
+  // Update current session time every minute
   useEffect(() => {
-    if (!storageReady || !currentAgent) return;
-    (async () => { try { await window.storage.set("flotte_agent", currentAgent); } catch (e) { } })();
-  }, [currentAgent, storageReady]);
+    if (!currentAgent || !agentSessionStart) return;
+    const interval = setInterval(() => {
+      setAgentSessions((prev: any) => ({
+        ...prev,
+        [currentAgent]: {
+          ...prev[currentAgent],
+          lastActive: Date.now(),
+          totalTime: (prev[currentAgent]?.totalTime || 0) + 60000 
+        }
+      }));
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [currentAgent, agentSessionStart]);
 
   // SAVE totalCalls
   useEffect(() => {
@@ -134,6 +178,23 @@ export default function App() {
     setModal({ driverId });
   }, []);
 
+  const handleLogin = (name: string, role: "ADMIN" | "AGENT") => {
+    setCurrentAgent(name);
+    setUserRole(role);
+    setAgentSessionStart(Date.now());
+    setAgentSessions((prev: any) => ({
+      ...prev,
+      [name]: {
+        ...prev[name],
+        lastLogin: new Date().toISOString(),
+        totalTime: prev[name]?.totalTime || 0,
+        calls: prev[name]?.calls || 0
+      }
+    }));
+    // Log login
+    setGlobalLogs(l => [{ time: new Date().toISOString(), agent: name, action: "LOGIN", details: `Connexion (${role})` }, ...l].slice(0, 500));
+  };
+
   const handleConfirm = useCallback(({ agent, comment, outcome }: any) => {
     if (!modal) return;
     const { driverId } = modal;
@@ -143,6 +204,24 @@ export default function App() {
     const now = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
     const newCount = driver._callCount + 1;
     const entry = { agent, time: now, comment, outcome, via: "call" };
+
+    // Update agent stats
+    setAgentSessions((prev: any) => ({
+      ...prev,
+      [agent]: {
+        ...prev[agent],
+        calls: (prev[agent]?.calls || 0) + 1,
+        lastActive: Date.now()
+      }
+    }));
+
+    // Add to global log
+    setGlobalLogs(l => [{ 
+      time: new Date().toISOString(), 
+      agent, 
+      action: "CALL", 
+      details: `Appel ${driver.nom} (${outcome})` 
+    }, ...l].slice(0, 500));
 
     setCurrentAgent(agent);
     setTotalCalls(c => c + 1);
@@ -255,6 +334,10 @@ export default function App() {
   const modalDriver = modal ? driversRef.current.find(d => d.id === modal.driverId) : null;
   const waDriver = waModal ? driversRef.current.find(d => d.id === waModal.driverId) : null;
 
+  if (!currentAgent) {
+    return <LoginModal users={users} onLogin={handleLogin} />;
+  }
+
   return (
     <div style={{ fontFamily: "'DM Sans', system-ui, sans-serif", background: "#f8fafc", minHeight: "100vh" }}>
       {modal && modalDriver && (
@@ -270,6 +353,7 @@ export default function App() {
         <WhatsAppModal driver={waDriver} onClose={() => setWaModal(null)} />
       )}
 
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       <Toast events={toasts} />
 
       {/* HEADER */}
@@ -284,6 +368,11 @@ export default function App() {
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              {storageMode === "local" && (
+                <div style={{ background: "#fef2f2", color: "#b91c1c", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: "1px solid #fca5a5", display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>⚠️ Mode Local (Non synchronisé)</span>
+                </div>
+              )}
               {currentAgent && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "rgba(255,255,255,0.15)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.3)" }}>
                   <span style={{ fontSize: 16 }}>👤</span>
@@ -310,14 +399,21 @@ export default function App() {
                 </div>
                 {totalCalls > 0 && <span style={{ position: "absolute", top: -5, right: -5, width: 18, height: 18, borderRadius: "50%", background: "#22c55e", color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 3px rgba(34,197,94,0.3)", animation: "pop 0.3s ease-out" }}>{stats.appeles}</span>}
               </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)" }}>
-                📂 Importer CSV
-                <input type="file" accept=".csv" onChange={handleFileUpload} style={{ display: "none" }} />
-              </label>
+              {userRole === "ADMIN" && (
+                <>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)" }}>
+                    📂 Importer CSV
+                    <input type="file" accept=".csv" onChange={handleFileUpload} style={{ display: "none" }} />
+                  </label>
+                  <button onClick={() => setShowSettings(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)", color: "#fff" }}>
+                    ⚙️ Paramètres
+                  </button>
+                </>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", gap: 2 }}>
-            {[["pilotage", "📊 Pilotage"], ["liste", "👥 Chauffeurs"], ["kpi", "📈 KPI du Soir"], ["historique", "🕒 Historique"]].map(([tab, label]) => (
+            {[["pilotage", "📊 Pilotage"], ["liste", "👥 Chauffeurs"], ["kpi", "📈 KPI du Soir"], ["agents", "bust_in_silhouette Équipe & Accès"], ["historique", "🕒 Historique"]].map(([tab, label]) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -330,10 +426,11 @@ export default function App() {
                   cursor: "pointer",
                   fontSize: 14,
                   fontWeight: activeTab === tab ? 700 : 400,
-                  borderRadius: "8px 8px 0 0"
+                  borderRadius: "8px 8px 0 0",
+                  display: "flex", alignItems: "center", gap: 6
                 }}
               >
-                {label}
+                {label.includes("bust") ? "👥 Équipe & Accès" : label}
               </button>
             ))}
           </div>
@@ -344,6 +441,32 @@ export default function App() {
         {/* PILOTAGE */}
         {activeTab === "pilotage" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Trends Section - Fixed to compare with previous import */}
+            {importHistory.length > 1 && (
+              <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 4 }}>
+                {[
+                  { label: "Zone Rouge", curr: stats.rouge, prev: importHistory[1].rouge, color: "#ef4444", inverse: true },
+                  { label: "Zone Orange", curr: stats.orange, prev: importHistory[1].orange, color: "#f97316", inverse: true },
+                  { label: "Actifs", curr: stats.ok, prev: importHistory[1].ok, color: "#22c55e", inverse: false }
+                ].map(({ label, curr, prev, color, inverse }) => {
+                  const diff = curr - prev;
+                  const pct = prev > 0 ? ((diff / prev) * 100).toFixed(1) : "0";
+                  const isGood = inverse ? diff <= 0 : diff >= 0;
+                  return (
+                    <div key={label} style={{ background: "#fff", padding: "8px 14px", borderRadius: 10, border: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 10, minWidth: 180 }}>
+                      <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 600 }}>{label}</div>
+                      <div style={{ marginLeft: "auto", display: "flex", alignItems: "baseline", gap: 4 }}>
+                        <span style={{ fontWeight: 800, fontSize: 16, color }}>{curr}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: isGood ? "#16a34a" : "#dc2626" }}>
+                          {diff > 0 ? "+" : ""}{diff} ({diff > 0 ? "↗" : diff < 0 ? "↘" : "="} {pct}%)
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {totalCalls > 0 && (
               <div style={{ background: "linear-gradient(90deg,#1e3a5f,#1d4ed8)", borderRadius: 12, padding: "14px 22px", display: "flex", alignItems: "center", gap: 20, color: "#fff", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 26 }}>🚀</span>
@@ -364,23 +487,60 @@ export default function App() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 12 }}>
               {[
-                { label: "Total Flotte", v: stats.total, c: "#1d4ed8", icon: "🚕" },
-                { label: "Zone Rouge", v: stats.rouge, c: "#ef4444", icon: "🚨" },
-                { label: "Zone Orange", v: stats.orange, c: "#f97316", icon: "⚠️" },
-                { label: "Nouveaux", v: stats.nouveau, c: "#8b5cf6", icon: "🎉" },
-                { label: "Actifs", v: stats.ok, c: "#22c55e", icon: "✅" },
-                { label: "Bloqués", v: stats.fin_bloque, c: "#dc2626", icon: "⛔" },
-                { label: "Appels passés", v: totalCalls, c: "#1d4ed8", icon: "📞" },
-                { label: "Contactés", v: stats.appeles, c: "#0891b2", icon: "🗣️" },
-              ].map(({ label, v, c, icon }) => (
-                <div key={label} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "14px 16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>{label}</span>
-                    <span style={{ fontSize: 17 }}>{icon}</span>
+                { label: "Total Flotte", v: stats.total, c: "#1d4ed8", icon: "🚕", key: "count", inverse: false },
+                { label: "Zone Rouge", v: stats.rouge, c: "#ef4444", icon: "🚨", key: "rouge", inverse: true },
+                { label: "Zone Orange", v: stats.orange, c: "#f97316", icon: "⚠️", key: "orange", inverse: true },
+                { label: "Nouveaux", v: stats.nouveau, c: "#8b5cf6", icon: "🎉", key: "nouveau", inverse: false },
+                { label: "Actifs", v: stats.ok, c: "#22c55e", icon: "✅", key: "ok", inverse: false },
+                { label: "Bloqués", v: stats.fin_bloque, c: "#dc2626", icon: "⛔", key: "fin_bloque", inverse: true },
+                { label: "Appels passés", v: totalCalls, c: "#1d4ed8", icon: "📞", key: null, inverse: false },
+                { label: "Contactés", v: stats.appeles, c: "#0891b2", icon: "🗣️", key: null, inverse: false },
+              ].map(({ label, v, c, icon, key, inverse }) => {
+                let trend = null;
+                if (key) {
+                  if (importHistory.length > 1) {
+                    const prev = importHistory[1][key];
+                    if (prev !== undefined) {
+                      const diff = (v as number) - prev;
+                      const pct = prev > 0 ? Math.round((diff / prev) * 100) : 0;
+                      const isGood = inverse ? diff <= 0 : diff >= 0;
+                      trend = { diff, pct, isGood, hasHistory: true };
+                    }
+                  } else {
+                    // Placeholder for no history
+                    trend = { diff: 0, pct: 0, isGood: true, hasHistory: false };
+                  }
+                }
+
+                return (
+                  <div key={label} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: "14px 16px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500 }}>{label}</span>
+                      <span style={{ fontSize: 17 }}>{icon}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <AnimatedNumber value={v as number} color={c} />
+                      {trend && (
+                        <span style={{ 
+                          fontSize: 11, fontWeight: 700, 
+                          color: trend.hasHistory ? (trend.isGood ? "#16a34a" : "#dc2626") : "#9ca3af", 
+                          background: trend.hasHistory ? (trend.isGood ? "#f0fdf4" : "#fef2f2") : "#f3f4f6", 
+                          padding: "1px 6px", borderRadius: 99,
+                          display: "flex", alignItems: "center", gap: 2
+                        }}>
+                          {trend.hasHistory ? (
+                            <>
+                              {trend.diff > 0 ? "+" : ""}{trend.diff} ({trend.diff > 0 ? "↗" : trend.diff < 0 ? "↘" : "="} {Math.abs(trend.pct)}%)
+                            </>
+                          ) : (
+                            <span title="Importez un second fichier pour voir l'évolution">--</span>
+                          )}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <AnimatedNumber value={v as number} color={c} />
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
@@ -598,8 +758,17 @@ export default function App() {
                 </div>
               ))}
               {currentAgent && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: "#eff6ff", borderRadius: 10, border: "1px solid #bfdbfe", fontSize: 13, color: "#1d4ed8", fontWeight: 700 }}>
-                  👤 Agent : {currentAgent}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: userRole === "ADMIN" ? "#fef3c7" : "#eff6ff", borderRadius: 10, border: `1px solid ${userRole === "ADMIN" ? "#fcd34d" : "#bfdbfe"}`, fontSize: 13, color: userRole === "ADMIN" ? "#92400e" : "#1d4ed8", fontWeight: 700 }}>
+                  {userRole === "ADMIN" ? "🛡️ Admin" : "👤 Agent"} : {currentAgent}
+                  {userRole === "ADMIN" && (
+                    <button 
+                      onClick={() => setActiveTab("agents")}
+                      style={{ marginLeft: 8, padding: "4px 8px", background: "#d97706", color: "#fff", border: "none", borderRadius: 6, fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                    >
+                      🔑 Gérer les accès
+                    </button>
+                  )}
+                  <button onClick={() => window.location.reload()} title="Déconnexion" style={{ marginLeft: 8, border: "none", background: "transparent", cursor: "pointer", fontSize: 10, opacity: 0.6 }}>❌</button>
                 </div>
               )}
             </div>
@@ -673,6 +842,153 @@ Cellule de Relance Yango`}
               }} style={{ marginTop: 12, padding: "10px 20px", background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 14 }}>
                 📋 Copier le rapport
               </RippleBtn>
+            </div>
+          </div>
+        )}
+
+        {/* AGENTS */}
+        {activeTab === "agents" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* ACCESS MANAGEMENT - ADMIN ONLY */}
+            {userRole === "ADMIN" && (
+              <div style={{ background: "#fff", borderRadius: 12, border: "2px solid #fcd34d", padding: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div style={{ fontWeight: 800, fontSize: 18, color: "#92400e", display: "flex", alignItems: "center", gap: 8 }}>
+                    🔑 Gestion des Accès <span style={{ fontSize: 11, background: "#fef3c7", color: "#b45309", padding: "2px 8px", borderRadius: 99 }}>ADMIN</span>
+                  </div>
+                </div>
+                
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 20, background: "#fffbeb", padding: 16, borderRadius: 10 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Nom de l'Agent</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ex: PAUL" 
+                      id="new-agent-name"
+                      style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14, width: 140 }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Code d'accès</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ex: 0000" 
+                      id="new-agent-code"
+                      style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14, width: 100 }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Rôle</label>
+                    <select id="new-agent-role" style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}>
+                      <option value="AGENT">👤 Agent</option>
+                      <option value="ADMIN">🛡️ Admin</option>
+                    </select>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const nameInput = document.getElementById("new-agent-name") as HTMLInputElement;
+                      const codeInput = document.getElementById("new-agent-code") as HTMLInputElement;
+                      const roleInput = document.getElementById("new-agent-role") as HTMLSelectElement;
+                      
+                      if (nameInput.value && codeInput.value) {
+                        const newUsers = [...users, { 
+                          name: nameInput.value.toUpperCase(), 
+                          code: codeInput.value, 
+                          role: roleInput.value as "ADMIN" | "AGENT" 
+                        }];
+                        setUsers(newUsers);
+                        window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
+                        
+                        nameInput.value = "";
+                        codeInput.value = "";
+                        alert(`Utilisateur ${nameInput.value} ajouté !`);
+                      }
+                    }}
+                    style={{ padding: "8px 16px", background: "#d97706", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Ajouter
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+                  {users.map((u, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: u.role === "ADMIN" ? "#b45309" : "#1e3a5f" }}>
+                          {u.role === "ADMIN" ? "🛡️" : "👤"} {u.name}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>Code: {u.code}</div>
+                      </div>
+                      {users.length > 1 && (
+                        <button 
+                          onClick={() => {
+                            if (window.confirm(`Supprimer l'accès pour ${u.name} ?`)) {
+                              const newUsers = users.filter((_, idx) => idx !== i);
+                              setUsers(newUsers);
+                              window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
+                            }
+                          }}
+                          style={{ border: "none", background: "#fee2e2", color: "#b91c1c", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                        >
+                          Supprimer
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: 20 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>👥 Performance des Agents</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 16 }}>
+                {Object.entries(agentSessions).map(([name, data]: [string, any]) => {
+                  const hours = Math.floor((data.totalTime || 0) / 3600000);
+                  const mins = Math.floor(((data.totalTime || 0) % 3600000) / 60000);
+                  return (
+                    <div key={name} style={{ background: "#f8fafc", borderRadius: 12, padding: 16, border: "1px solid #e2e8f0" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <div style={{ fontWeight: 700, fontSize: 16, color: "#1e3a5f" }}>{name}</div>
+                        {name === currentAgent && <span style={{ fontSize: 10, background: "#dbeafe", color: "#1d4ed8", padding: "2px 8px", borderRadius: 99, fontWeight: 700 }}>ACTIF</span>}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #f1f5f9" }}>
+                          <div style={{ fontSize: 20, fontWeight: 800, color: "#1d4ed8" }}>{data.calls || 0}</div>
+                          <div style={{ fontSize: 11, color: "#64748b" }}>Appels</div>
+                        </div>
+                        <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #f1f5f9" }}>
+                          <div style={{ fontSize: 20, fontWeight: 800, color: "#059669" }}>{hours}h{mins}</div>
+                          <div style={{ fontSize: 11, color: "#64748b" }}>Temps total</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 12, textAlign: "right" }}>
+                        Dernière activité : {data.lastActive ? new Date(data.lastActive).toLocaleTimeString() : "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden" }}>
+              <div style={{ padding: "14px 18px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb", fontWeight: 700, fontSize: 15 }}>
+                📜 Journal d'Activité Global
+              </div>
+              <div style={{ maxHeight: 500, overflowY: "auto" }}>
+                {globalLogs.map((log, i) => (
+                  <div key={i} style={{ padding: "10px 18px", borderBottom: "1px solid #f1f5f9", display: "flex", gap: 12, alignItems: "center", fontSize: 13 }}>
+                    <div style={{ color: "#94a3b8", fontFamily: "monospace", fontSize: 11, minWidth: 130 }}>
+                      {new Date(log.time).toLocaleString()}
+                    </div>
+                    <div style={{ fontWeight: 700, color: "#1e3a5f", minWidth: 80 }}>{log.agent}</div>
+                    <div style={{ padding: "2px 8px", borderRadius: 6, background: log.action === "LOGIN" ? "#dbeafe" : log.action === "CALL" ? "#dcfce7" : "#f1f5f9", color: log.action === "LOGIN" ? "#1e40af" : log.action === "CALL" ? "#166534" : "#475569", fontSize: 11, fontWeight: 700 }}>
+                      {log.action}
+                    </div>
+                    <div style={{ color: "#334155", flex: 1 }}>{log.details}</div>
+                  </div>
+                ))}
+                {globalLogs.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "#94a3b8" }}>Aucune activité enregistrée</div>}
+              </div>
             </div>
           </div>
         )}
