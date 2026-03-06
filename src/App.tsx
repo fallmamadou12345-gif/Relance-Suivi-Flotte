@@ -404,7 +404,7 @@ export default function App() {
       const prevMap = new Map(prev.map(d => [d.id, d]));
       
       const mergedNew = parsed.map((d: any) => {
-        const old = prevMap.get(d.id);
+        const old: any = prevMap.get(d.id);
         if (old) {
           return {
             ...d,
@@ -1038,7 +1038,7 @@ Cellule de Relance Yango`}
                       <input 
                         type="text" 
                         placeholder="Ex: PAUL" 
-                        value={newUser.name}
+                        value={newUser.name || ""}
                         onChange={e => setNewUser({...newUser, name: e.target.value.toUpperCase()})}
                         style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
                       />
@@ -1048,7 +1048,7 @@ Cellule de Relance Yango`}
                       <input 
                         type="text" 
                         placeholder="Ex: 0000" 
-                        value={newUser.code}
+                        value={newUser.code || ""}
                         onChange={e => setNewUser({...newUser, code: e.target.value})}
                         style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
                       />
@@ -1056,7 +1056,7 @@ Cellule de Relance Yango`}
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Rôle Système</label>
                       <select 
-                        value={newUser.role}
+                        value={newUser.role || "AGENT"}
                         onChange={e => setNewUser({...newUser, role: e.target.value})}
                         style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
                       >
@@ -1069,7 +1069,7 @@ Cellule de Relance Yango`}
                       <input 
                         type="text" 
                         placeholder="Ex: Superviseur Flotte" 
-                        value={newUser.customRole}
+                        value={newUser.customRole || ""}
                         onChange={e => setNewUser({...newUser, customRole: e.target.value})}
                         style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
                       />
