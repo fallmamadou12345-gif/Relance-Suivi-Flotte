@@ -1084,11 +1084,12 @@ Cellule de Relance Yango`}
                         <label key={f.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
                           <input 
                             type="checkbox" 
-                            checked={newUser.allowedFleets.includes(f.id)}
+                            checked={(newUser.allowedFleets || []).includes(f.id)}
                             onChange={e => {
+                              const currentFleets = newUser.allowedFleets || [];
                               const newFleets = e.target.checked 
-                                ? [...newUser.allowedFleets, f.id]
-                                : newUser.allowedFleets.filter(id => id !== f.id);
+                                ? [...currentFleets, f.id]
+                                : currentFleets.filter(id => id !== f.id);
                               setNewUser({...newUser, allowedFleets: newFleets});
                             }}
                           />
@@ -1154,7 +1155,7 @@ Cellule de Relance Yango`}
                         <div style={{ display: "flex", gap: 6 }}>
                           <button 
                             onClick={() => {
-                              setNewUser({ ...u });
+                              setNewUser({ ...u, allowedFleets: u.allowedFleets || [] });
                               setEditingIndex(i);
                               // Scroll to form
                               document.getElementById("user-form")?.scrollIntoView({ behavior: "smooth" });
