@@ -52,6 +52,7 @@ export default function App() {
   const [fleets, setFleets] = useState(INITIAL_FLEETS);
   const [currentFleetId, setCurrentFleetId] = useState<string>("ALL"); // "ALL" or specific fleet ID
   const [newUser, setNewUser] = useState({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] as string[] });
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   const driversRef = useRef(drivers);
   driversRef.current = drivers;
@@ -1030,7 +1031,7 @@ Cellule de Relance Yango`}
                   </div>
                 </div>
                 
-                <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20, background: "#fffbeb", padding: 20, borderRadius: 10 }}>
+                <div id="user-form" style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20, background: "#fffbeb", padding: 20, borderRadius: 10 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Nom de l'Agent</label>
@@ -1097,30 +1098,51 @@ Cellule de Relance Yango`}
                     </div>
                   </div>
 
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                    {editingIndex !== null && (
+                      <button 
+                        onClick={() => {
+                          setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
+                          setEditingIndex(null);
+                        }}
+                        style={{ padding: "10px 24px", background: "#9ca3af", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Annuler
+                      </button>
+                    )}
                     <button 
                       onClick={() => {
                         if (newUser.name && newUser.code) {
-                          const newUsers = [...users, { ...newUser }];
+                          let newUsers;
+                          if (editingIndex !== null) {
+                            // Update existing
+                            newUsers = [...users];
+                            newUsers[editingIndex] = { ...newUser };
+                            setEditingIndex(null);
+                          } else {
+                            // Add new
+                            newUsers = [...users, { ...newUser }];
+                          }
                           setUsers(newUsers);
-                          window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
+                          // Force immediate save
+                          window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(console.error);
                           
                           setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
-                          alert(`Utilisateur ${newUser.name} ajouté !`);
+                          alert(editingIndex !== null ? "Utilisateur modifié !" : `Utilisateur ${newUser.name} ajouté !`);
                         } else {
                           alert("Nom et Code requis !");
                         }
                       }}
-                      style={{ padding: "10px 24px", background: "#d97706", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
+                      style={{ padding: "10px 24px", background: editingIndex !== null ? "#1d4ed8" : "#d97706", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
                     >
-                      Ajouter l'utilisateur
+                      {editingIndex !== null ? "Mettre à jour" : "Ajouter l'utilisateur"}
                     </button>
                   </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
                   {users.map((u, i) => (
-                    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8, padding: "14px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+                    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8, padding: "14px", background: editingIndex === i ? "#eff6ff" : "#fff", border: `1px solid ${editingIndex === i ? "#3b82f6" : "#e5e7eb"}`, borderRadius: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
                           <div style={{ fontWeight: 700, fontSize: 15, color: u.role === "ADMIN" ? "#b45309" : "#1e3a5f" }}>
@@ -1129,20 +1151,37 @@ Cellule de Relance Yango`}
                           {u.customRole && <div style={{ fontSize: 12, color: "#4b5563", fontStyle: "italic" }}>{u.customRole}</div>}
                           <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace", marginTop: 2 }}>Code: {u.code}</div>
                         </div>
-                        {users.length > 1 && (
+                        <div style={{ display: "flex", gap: 6 }}>
                           <button 
                             onClick={() => {
-                              if (window.confirm(`Supprimer l'accès pour ${u.name} ?`)) {
-                                const newUsers = users.filter((_, idx) => idx !== i);
-                                setUsers(newUsers);
-                                window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
-                              }
+                              setNewUser({ ...u });
+                              setEditingIndex(i);
+                              // Scroll to form
+                              document.getElementById("user-form")?.scrollIntoView({ behavior: "smooth" });
                             }}
-                            style={{ border: "none", background: "#fee2e2", color: "#b91c1c", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                            style={{ border: "none", background: "#dbeafe", color: "#1d4ed8", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
                           >
-                            Supprimer
+                            Modifier
                           </button>
-                        )}
+                          {users.length > 1 && (
+                            <button 
+                              onClick={() => {
+                                if (window.confirm(`Supprimer l'accès pour ${u.name} ?`)) {
+                                  const newUsers = users.filter((_, idx) => idx !== i);
+                                  setUsers(newUsers);
+                                  window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
+                                  if (editingIndex === i) {
+                                    setEditingIndex(null);
+                                    setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
+                                  }
+                                }
+                              }}
+                              style={{ border: "none", background: "#fee2e2", color: "#b91c1c", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                            >
+                              Supprimer
+                            </button>
+                          )}
+                        </div>
                       </div>
                       
                       {/* Allowed Fleets Display */}
