@@ -2,12 +2,32 @@ import React, { useState, useRef } from 'react';
 
 interface SettingsModalProps {
   onClose: () => void;
+  fleets: { id: string; name: string }[];
+  setFleets: (fleets: { id: string; name: string }[]) => void;
 }
 
-export default function SettingsModal({ onClose }: SettingsModalProps) {
+export default function SettingsModal({ onClose, fleets, setFleets }: SettingsModalProps) {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [newFleetName, setNewFleetName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAddFleet = () => {
+    if (!newFleetName.trim()) return;
+    const id = newFleetName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (fleets.some(f => f.id === id)) {
+      alert("Une flotte avec ce nom existe déjà (ID similaire).");
+      return;
+    }
+    setFleets([...fleets, { id, name: newFleetName.trim() }]);
+    setNewFleetName("");
+  };
+
+  const handleDeleteFleet = (id: string) => {
+    if (confirm("Êtes-vous sûr de vouloir supprimer cette flotte ? Les chauffeurs associés ne seront pas supprimés mais pourraient ne plus être filtrables correctement.")) {
+      setFleets(fleets.filter(f => f.id !== id));
+    }
+  };
 
   const handleBackup = () => {
     // Trigger download
@@ -91,8 +111,44 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         </div>
 
         {/* Content */}
-        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20, overflowY: "auto" }}>
           
+          <div style={{ background: "#f0fdf4", padding: 16, borderRadius: 8, border: "1px solid #bbf7d0" }}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 15, fontWeight: 700, color: "#166534" }}>
+              🏢 Gestion des Flottes
+            </h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {fleets.map(f => (
+                <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", padding: "8px 12px", borderRadius: 6, border: "1px solid #dcfce7" }}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{f.name}</span>
+                  {f.id !== "autres" && (
+                    <button 
+                      onClick={() => handleDeleteFleet(f.id)}
+                      style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                    >
+                      Supprimer
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <input 
+                  value={newFleetName}
+                  onChange={e => setNewFleetName(e.target.value)}
+                  placeholder="Nom de la nouvelle flotte..."
+                  style={{ flex: 1, padding: "8px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 13 }}
+                />
+                <button 
+                  onClick={handleAddFleet}
+                  disabled={!newFleetName.trim()}
+                  style={{ padding: "8px 12px", background: "#16a34a", color: "#fff", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", opacity: !newFleetName.trim() ? 0.5 : 1 }}
+                >
+                  Ajouter
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div style={{ background: "#eff6ff", padding: 16, borderRadius: 8, border: "1px solid #bfdbfe" }}>
             <h3 style={{ margin: "0 0 8px 0", fontSize: 15, fontWeight: 700, color: "#1e40af" }}>
               1. Sauvegarder vos données

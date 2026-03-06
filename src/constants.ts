@@ -1,4 +1,11 @@
 
+export const INITIAL_FLEETS = [
+  { id: "diagne", name: "Diagne Transport" },
+  { id: "ndongo", name: "Transport Ndongo Fall" },
+  { id: "sy", name: "Sy Transport" },
+  { id: "autres", name: "Autres Parcs" }
+];
+
 export const CODES_COMMENTAIRE = ["[PANNE]", "[SOLDE]", "[DOCS]", "[MALADE]", "[RAPPEL]", "[RÉSOLU]"];
 
 export const AGENTS = [

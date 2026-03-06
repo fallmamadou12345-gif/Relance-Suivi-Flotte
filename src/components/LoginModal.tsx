@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 
 interface LoginModalProps {
   users: any[];
-  onLogin: (name: string, role: "ADMIN" | "AGENT") => void;
+  onLogin: (user: any) => void;
 }
 
 export default function LoginModal({ users, onLogin }: LoginModalProps) {
@@ -21,7 +21,7 @@ export default function LoginModal({ users, onLogin }: LoginModalProps) {
     const user = users.find(u => u.name === cleanName && u.code === cleanPass);
 
     if (user) {
-      onLogin(user.name, user.role);
+      onLogin(user);
     } else {
       setError("Nom ou code d'accès incorrect.");
     }

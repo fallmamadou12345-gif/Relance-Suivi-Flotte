@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { generateSampleDrivers } from "./utils";
-import { ZONE_CONFIG } from "./constants";
+import { ZONE_CONFIG, INITIAL_FLEETS } from "./constants";
 import AnimatedNumber from "./components/AnimatedNumber";
 import RippleBtn from "./components/RippleBtn";
 import AgentModal from "./components/AgentModal";
@@ -10,6 +10,7 @@ import DriverRow from "./components/DriverRow";
 import Toast from "./components/Toast";
 import LoginModal from "./components/LoginModal";
 import SettingsModal from "./components/SettingsModal";
+import GoldTab from "./components/GoldTab";
 
 const PER_PAGE = 30;
 
@@ -21,9 +22,11 @@ export default function App() {
   const [waModal, setWaModal] = useState<{ driverId: string } | null>(null);
   const [currentAgent, setCurrentAgent] = useState("");
   const [userRole, setUserRole] = useState<"ADMIN" | "AGENT" | null>(null);
+  const [currentUserFleets, setCurrentUserFleets] = useState<string[]>([]);
+  const [currentUserCustomRole, setCurrentUserCustomRole] = useState<string>("");
   const [users, setUsers] = useState<any[]>([
-    { name: "ADMIN", code: "admin", role: "ADMIN" },
-    { name: "AGENT", code: "1234", role: "AGENT" }
+    { name: "ADMIN", code: "admin", role: "ADMIN", allowedFleets: [], customRole: "Administrateur" },
+    { name: "AGENT", code: "1234", role: "AGENT", allowedFleets: [], customRole: "Agent Support" }
   ]);
   const [agentSessionStart, setAgentSessionStart] = useState<number | null>(null);
   const [agentSessions, setAgentSessions] = useState<any>({}); // { agent: { totalTime: ms, calls: number } }
@@ -43,9 +46,21 @@ export default function App() {
   const [totalCalls, setTotalCalls] = useState(0);
   const [storageMode, setStorageMode] = useState<"cloud" | "local" | "unknown">("unknown");
   const [showSettings, setShowSettings] = useState(false);
+  const [recruits, setRecruits] = useState<Record<string, string>>({});
   
+  // Fleet Management
+  const [fleets, setFleets] = useState(INITIAL_FLEETS);
+  const [currentFleetId, setCurrentFleetId] = useState<string>("ALL"); // "ALL" or specific fleet ID
+  const [newUser, setNewUser] = useState({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] as string[] });
+
   const driversRef = useRef(drivers);
   driversRef.current = drivers;
+
+  // Filter drivers by fleet for stats and display
+  // const fleetDrivers = useMemo(() => {
+  //   if (currentFleetId === "ALL") return drivers;
+  //   return drivers.filter(d => d.fleetId === currentFleetId);
+  // }, [drivers, currentFleetId]);
 
   // LOAD from storage on mount
   useEffect(() => {
@@ -58,6 +73,13 @@ export default function App() {
         }
       } catch (e) { }
       
+      try {
+        const savedFleets = await window.storage.get("flotte_fleets");
+        if (savedFleets && savedFleets.value) {
+          setFleets(JSON.parse(savedFleets.value));
+        }
+      } catch (e) { }
+
       try {
         const hist = await window.storage.get("flotte_history");
         if (hist && hist.value) setImportHistory(JSON.parse(hist.value));
@@ -92,22 +114,29 @@ export default function App() {
         if (tc && tc.value) setTotalCalls(parseInt(tc.value) || 0);
       } catch (e) { }
 
+      try {
+        const rec = await window.storage.get("flotte_recruits");
+        if (rec && rec.value) setRecruits(JSON.parse(rec.value));
+      } catch (e) { }
+
       setStorageReady(true);
       setStorageMode(window.storage.mode);
     })();
   }, []);
 
-  // SAVE sessions & logs
+  // SAVE sessions & logs & fleets
   useEffect(() => {
     if (!storageReady) return;
     const save = async () => {
       try { await window.storage.set("flotte_sessions", JSON.stringify(agentSessions)); } catch (e) { }
       try { await window.storage.set("flotte_logs", JSON.stringify(globalLogs)); } catch (e) { }
       try { await window.storage.set("flotte_users", JSON.stringify(users)); } catch (e) { }
+      try { await window.storage.set("flotte_recruits", JSON.stringify(recruits)); } catch (e) { }
+      try { await window.storage.set("flotte_fleets", JSON.stringify(fleets)); } catch (e) { }
     };
     const t = setTimeout(save, 2000);
     return () => clearTimeout(t);
-  }, [agentSessions, globalLogs, storageReady]);
+  }, [agentSessions, globalLogs, users, recruits, fleets, storageReady]);
 
   // Update current session time every minute
   useEffect(() => {
@@ -125,29 +154,65 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentAgent, agentSessionStart]);
 
+  // Poll for session updates (Real-time visibility)
+  useEffect(() => {
+    if (!storageReady) return;
+    const poll = async () => {
+      try {
+        const sess = await window.storage.get("flotte_sessions");
+        if (sess && sess.value) {
+          const remote = JSON.parse(sess.value);
+          setAgentSessions((prev: any) => {
+            // Merge: take all remote sessions, but keep my own local state as it's the most up to date for me
+            const merged = { ...remote };
+            if (currentAgent && prev[currentAgent]) {
+              merged[currentAgent] = prev[currentAgent];
+            }
+            return merged;
+          });
+        }
+      } catch (e) { }
+    };
+    const interval = setInterval(poll, 5000); // Poll every 5 seconds
+    return () => clearInterval(interval);
+  }, [storageReady, currentAgent]);
+
   // SAVE totalCalls
   useEffect(() => {
     if (!storageReady) return;
     (async () => { try { await window.storage.set("flotte_totalcalls", String(totalCalls)); } catch (e) { } })();
   }, [totalCalls, storageReady]);
 
-  const stats = useMemo(() => ({
-    total: drivers.length,
-    rouge: drivers.filter(d => d.zone === "ROUGE").length,
-    orange: drivers.filter(d => d.zone === "ORANGE").length,
-    nouveau: drivers.filter(d => d.zone === "NOUVEAU").length,
-    ok: drivers.filter(d => d.zone === "OK").length,
-    fin_bloque: drivers.filter(d => d.fin_bloque).length,
-    appeles: drivers.filter(d => d._called).length,
-    rougeApp: drivers.filter(d => d.zone === "ROUGE" && d._called).length,
-    orangeApp: drivers.filter(d => d.zone === "ORANGE" && d._called).length,
-    nouveauApp: drivers.filter(d => d.zone === "NOUVEAU" && d._called).length,
-  }), [drivers]);
+  // Filter drivers by fleet for stats and display
+  const fleetDrivers = useMemo(() => {
+    // 1. Filter by User Access
+    let accessibleDrivers = drivers;
+    if (userRole !== "ADMIN" && currentUserFleets.length > 0) {
+      accessibleDrivers = drivers.filter(d => currentUserFleets.includes(d.fleetId));
+    }
 
-  const responsables = useMemo(() => [...new Set(drivers.map(d => d.responsable).filter(Boolean))].sort(), [drivers]);
+    // 2. Filter by Selected Fleet
+    if (currentFleetId === "ALL") return accessibleDrivers;
+    return accessibleDrivers.filter(d => d.fleetId === currentFleetId);
+  }, [drivers, currentFleetId, userRole, currentUserFleets]);
+
+  const stats = useMemo(() => ({
+    total: fleetDrivers.length,
+    rouge: fleetDrivers.filter(d => d.zone === "ROUGE").length,
+    orange: fleetDrivers.filter(d => d.zone === "ORANGE").length,
+    nouveau: fleetDrivers.filter(d => d.zone === "NOUVEAU").length,
+    ok: fleetDrivers.filter(d => d.zone === "OK").length,
+    fin_bloque: fleetDrivers.filter(d => d.fin_bloque).length,
+    appeles: fleetDrivers.filter(d => d._called).length,
+    rougeApp: fleetDrivers.filter(d => d.zone === "ROUGE" && d._called).length,
+    orangeApp: fleetDrivers.filter(d => d.zone === "ORANGE" && d._called).length,
+    nouveauApp: fleetDrivers.filter(d => d.zone === "NOUVEAU" && d._called).length,
+  }), [fleetDrivers]);
+
+  const responsables = useMemo(() => [...new Set(fleetDrivers.map(d => d.responsable).filter(Boolean))].sort(), [fleetDrivers]);
 
   const filtered = useMemo(() => {
-    let d = drivers;
+    let d = fleetDrivers;
     if (search) {
       const q = search.toLowerCase();
       d = d.filter(dr => dr.nom.toLowerCase().includes(q) || dr.tel.includes(q) || (dr.plaque || "").toLowerCase().includes(q));
@@ -169,7 +234,13 @@ export default function App() {
       if (sortBy === "calls") return b._callCount - a._callCount;
       return a.nom.localeCompare(b.nom);
     });
-  }, [drivers, search, zoneFilter, responsableFilter, showBloques, nonAppeles, inactifMin, inactifMax, sortBy]);
+  }, [fleetDrivers, search, zoneFilter, responsableFilter, showBloques, nonAppeles, inactifMin, inactifMax, sortBy]);
+
+  // Filter available fleets based on user access
+  const availableFleets = useMemo(() => {
+    if (userRole === "ADMIN" || currentUserFleets.length === 0) return fleets;
+    return fleets.filter(f => currentUserFleets.includes(f.id));
+  }, [fleets, userRole, currentUserFleets]);
 
   const paginated = useMemo(() => filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE), [filtered, page]);
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
@@ -178,21 +249,24 @@ export default function App() {
     setModal({ driverId });
   }, []);
 
-  const handleLogin = (name: string, role: "ADMIN" | "AGENT") => {
-    setCurrentAgent(name);
-    setUserRole(role);
+  const handleLogin = (user: any) => {
+    setCurrentAgent(user.name);
+    setUserRole(user.role);
+    setCurrentUserFleets(user.allowedFleets || []);
+    setCurrentUserCustomRole(user.customRole || "");
+    
     setAgentSessionStart(Date.now());
     setAgentSessions((prev: any) => ({
       ...prev,
-      [name]: {
-        ...prev[name],
+      [user.name]: {
+        ...prev[user.name],
         lastLogin: new Date().toISOString(),
-        totalTime: prev[name]?.totalTime || 0,
-        calls: prev[name]?.calls || 0
+        totalTime: prev[user.name]?.totalTime || 0,
+        calls: prev[user.name]?.calls || 0
       }
     }));
     // Log login
-    setGlobalLogs(l => [{ time: new Date().toISOString(), agent: name, action: "LOGIN", details: `Connexion (${role})` }, ...l].slice(0, 500));
+    setGlobalLogs(l => [{ time: new Date().toISOString(), agent: user.name, action: "LOGIN", details: `Connexion (${user.role})` }, ...l].slice(0, 500));
   };
 
   const handleConfirm = useCallback(({ agent, comment, outcome }: any) => {
@@ -242,6 +316,11 @@ export default function App() {
   }, []);
 
   const handleFileUpload = (e: any) => {
+    if (currentFleetId === "ALL") {
+      alert("Veuillez sélectionner une flotte spécifique (pas 'Toutes') avant d'importer un fichier.");
+      return;
+    }
+
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -252,6 +331,8 @@ export default function App() {
       const headers = lines[0].split(sep).map(h => h.trim().replace(/^\uFEFF/, ""));
       const today = new Date();
       
+      const collectedRecruits: Record<string, string> = {};
+
       const parsed = lines.slice(1).map((line, i) => {
         const vals = line.split(sep);
         const row: any = {};
@@ -268,6 +349,32 @@ export default function App() {
         
         const commandes = parseInt(row["Commandes terminées"]) || 0;
         const zone = commandes === 0 ? "NOUVEAU" : !jours ? "INCONNU" : jours >= 7 ? "ROUGE" : jours >= 3 ? "ORANGE" : "OK";
+
+        // Capture recruits (Source != YANGO)
+        const source = (row["Source"] || row["source"] || "").trim();
+        const tel = (row["Numéro de téléphone"] || "").replace(/\s/g, "");
+        const nom = row["Nom complet"] || "";
+        
+        let dateAjout = row["Date d'ajout"] || "";
+        // Normalize date to YYYY-MM-DD
+        if (dateAjout.match(/^\d{1,2}[\/.]\d{1,2}[\/.]\d{4}/)) {
+           const parts = dateAjout.split(/[\/.]/);
+           dateAjout = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        } else if (dateAjout) {
+           const d = new Date(dateAjout);
+           if (!isNaN(d.getTime())) dateAjout = d.toISOString().split('T')[0];
+        }
+        
+        // Default to local date if missing
+        if (!dateAjout) {
+          const d = new Date();
+          const offset = d.getTimezoneOffset() * 60000;
+          dateAjout = new Date(d.getTime() - offset).toISOString().split('T')[0];
+        }
+
+        if (source && source.toUpperCase() !== "YANGO" && tel) {
+          collectedRecruits[tel] = `${dateAjout}|${nom}|${currentFleetId}`;
+        }
 
         return {
           id: row["Lead ID"] || `r${i}`,
@@ -286,6 +393,7 @@ export default function App() {
           date_ajout: row["Date d'ajout"] || "",
           fin_bloque: limite < 0 && solde <= limite,
           ville: row["Ville"] || "",
+          fleetId: currentFleetId, // Tag with current fleet
           _called: false, _callCount: 0, _callLog: []
         };
       }).filter(r => r.nom !== "—" || r.tel);
@@ -294,7 +402,7 @@ export default function App() {
       const prev = driversRef.current;
       const prevMap = new Map(prev.map(d => [d.id, d]));
       
-      const merged = parsed.map((d: any) => {
+      const mergedNew = parsed.map((d: any) => {
         const old = prevMap.get(d.id);
         if (old) {
           return {
@@ -309,16 +417,21 @@ export default function App() {
         return d;
       });
 
-      // Stats snapshot
+      // Combine with drivers from OTHER fleets
+      const otherFleetsDrivers = prev.filter(d => d.fleetId !== currentFleetId);
+      const finalDrivers = [...otherFleetsDrivers, ...mergedNew];
+
+      // Stats snapshot (only for the imported fleet)
       const snap = {
         date: new Date().toLocaleString("fr-FR"),
         filename: file.name,
-        count: merged.length,
-        rouge: merged.filter((d: any) => d.zone === "ROUGE").length,
-        orange: merged.filter((d: any) => d.zone === "ORANGE").length,
-        nouveau: merged.filter((d: any) => d.zone === "NOUVEAU").length,
-        ok: merged.filter((d: any) => d.zone === "OK").length,
-        fin_bloque: merged.filter((d: any) => d.fin_bloque).length
+        fleet: currentFleetId,
+        count: mergedNew.length,
+        rouge: mergedNew.filter((d: any) => d.zone === "ROUGE").length,
+        orange: mergedNew.filter((d: any) => d.zone === "ORANGE").length,
+        nouveau: mergedNew.filter((d: any) => d.zone === "NOUVEAU").length,
+        ok: mergedNew.filter((d: any) => d.zone === "OK").length,
+        fin_bloque: mergedNew.filter((d: any) => d.fin_bloque).length
       };
 
       // Save history
@@ -326,16 +439,19 @@ export default function App() {
       setImportHistory(newHist);
       
       // Update drivers state
-      setDrivers(merged);
+      setDrivers(finalDrivers);
       setPage(1);
-      // Do NOT reset totalCalls here, it should be cumulative or managed separately
-      // setTotalCalls(0); 
+      
+      // Update recruits
+      const updatedRecruits = { ...recruits, ...collectedRecruits };
+      setRecruits(updatedRecruits);
 
       // PERSIST EVERYTHING IMMEDIATELY
       (async () => {
         try {
-          await window.storage.set("flotte_drivers", JSON.stringify(merged));
+          await window.storage.set("flotte_drivers", JSON.stringify(finalDrivers));
           await window.storage.set("flotte_history", JSON.stringify(newHist));
+          await window.storage.set("flotte_recruits", JSON.stringify(updatedRecruits));
         } catch (e) {
           console.error("Failed to save after import", e);
           setToasts(prev => [...prev, { id: Date.now(), message: "Erreur de sauvegarde automatique !", type: "error" }]);
@@ -367,7 +483,13 @@ export default function App() {
         <WhatsAppModal driver={waDriver} onClose={() => setWaModal(null)} />
       )}
 
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <SettingsModal 
+          onClose={() => setShowSettings(false)} 
+          fleets={fleets}
+          setFleets={setFleets}
+        />
+      )}
       <Toast events={toasts} />
 
       {/* HEADER */}
@@ -395,7 +517,26 @@ export default function App() {
               
               <div>
                 <div style={{ fontSize: 13, opacity: 0.8, fontWeight: 600, letterSpacing: "0.05em" }}>SUIVI FLOTTE</div>
-                <div style={{ fontSize: 12, opacity: 0.6 }}>{new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</div>
+                <select 
+                  value={currentFleetId} 
+                  onChange={(e) => setCurrentFleetId(e.target.value)}
+                  style={{ 
+                    background: "transparent", 
+                    color: "#fff", 
+                    border: "none", 
+                    fontSize: 16, 
+                    fontWeight: 800, 
+                    cursor: "pointer",
+                    outline: "none",
+                    padding: 0,
+                    margin: 0
+                  }}
+                >
+                  <option value="ALL" style={{ color: "#000" }}>Toutes les flottes</option>
+                  {availableFleets.map(f => (
+                    <option key={f.id} value={f.id} style={{ color: "#000" }}>{f.name}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -430,21 +571,21 @@ export default function App() {
                 </div>
                 {totalCalls > 0 && <span style={{ position: "absolute", top: -5, right: -5, width: 18, height: 18, borderRadius: "50%", background: "#22c55e", color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 3px rgba(34,197,94,0.3)", animation: "pop 0.3s ease-out" }}>{stats.appeles}</span>}
               </div>
+              {(userRole === "ADMIN" || currentUserFleets.length > 0) && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)" }}>
+                  📂 Importer CSV
+                  <input type="file" accept=".csv" onChange={handleFileUpload} style={{ display: "none" }} />
+                </label>
+              )}
               {userRole === "ADMIN" && (
-                <>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)" }}>
-                    📂 Importer CSV
-                    <input type="file" accept=".csv" onChange={handleFileUpload} style={{ display: "none" }} />
-                  </label>
-                  <button onClick={() => setShowSettings(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)", color: "#fff" }}>
-                    ⚙️ Paramètres
-                  </button>
-                </>
+                <button onClick={() => setShowSettings(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)", color: "#fff" }}>
+                  ⚙️ Paramètres
+                </button>
               )}
             </div>
           </div>
           <div style={{ display: "flex", gap: 2 }}>
-            {[["pilotage", "📊 Pilotage"], ["liste", "👥 Chauffeurs"], ["kpi", "📈 KPI du Soir"], ["agents", "bust_in_silhouette Équipe & Accès"], ["historique", "🕒 Historique"]].map(([tab, label]) => (
+            {[["pilotage", "📊 Pilotage"], ["liste", "👥 Chauffeurs"], ["kpi", "📈 KPI du Soir"], ["gold", "🏆 Objectif Gold"], ["agents", "bust_in_silhouette Équipe & Accès"], ["historique", "🕒 Historique"]].map(([tab, label]) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -889,81 +1030,129 @@ Cellule de Relance Yango`}
                   </div>
                 </div>
                 
-                <div style={{ display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 20, background: "#fffbeb", padding: 16, borderRadius: 10 }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Nom de l'Agent</label>
-                    <input 
-                      type="text" 
-                      placeholder="Ex: PAUL" 
-                      id="new-agent-name"
-                      style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14, width: 140 }}
-                    />
+                <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20, background: "#fffbeb", padding: 20, borderRadius: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Nom de l'Agent</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ex: PAUL" 
+                        value={newUser.name}
+                        onChange={e => setNewUser({...newUser, name: e.target.value.toUpperCase()})}
+                        style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Code d'accès</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ex: 0000" 
+                        value={newUser.code}
+                        onChange={e => setNewUser({...newUser, code: e.target.value})}
+                        style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Rôle Système</label>
+                      <select 
+                        value={newUser.role}
+                        onChange={e => setNewUser({...newUser, role: e.target.value})}
+                        style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
+                      >
+                        <option value="AGENT">👤 Agent</option>
+                        <option value="ADMIN">🛡️ Admin</option>
+                      </select>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Titre du poste (Optionnel)</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ex: Superviseur Flotte" 
+                        value={newUser.customRole}
+                        onChange={e => setNewUser({...newUser, customRole: e.target.value})}
+                        style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
+                      />
+                    </div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Code d'accès</label>
-                    <input 
-                      type="text" 
-                      placeholder="Ex: 0000" 
-                      id="new-agent-code"
-                      style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14, width: 100 }}
-                    />
+
+                  {/* Fleet Access */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Accès aux Flottes (Cocher pour autoriser)</label>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, background: "#fff", padding: 12, borderRadius: 8, border: "1px solid #fcd34d" }}>
+                      {fleets.map(f => (
+                        <label key={f.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                          <input 
+                            type="checkbox" 
+                            checked={newUser.allowedFleets.includes(f.id)}
+                            onChange={e => {
+                              const newFleets = e.target.checked 
+                                ? [...newUser.allowedFleets, f.id]
+                                : newUser.allowedFleets.filter(id => id !== f.id);
+                              setNewUser({...newUser, allowedFleets: newFleets});
+                            }}
+                          />
+                          {f.name}
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Rôle</label>
-                    <select id="new-agent-role" style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}>
-                      <option value="AGENT">👤 Agent</option>
-                      <option value="ADMIN">🛡️ Admin</option>
-                    </select>
+
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button 
+                      onClick={() => {
+                        if (newUser.name && newUser.code) {
+                          const newUsers = [...users, { ...newUser }];
+                          setUsers(newUsers);
+                          window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
+                          
+                          setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
+                          alert(`Utilisateur ${newUser.name} ajouté !`);
+                        } else {
+                          alert("Nom et Code requis !");
+                        }
+                      }}
+                      style={{ padding: "10px 24px", background: "#d97706", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      Ajouter l'utilisateur
+                    </button>
                   </div>
-                  <button 
-                    onClick={() => {
-                      const nameInput = document.getElementById("new-agent-name") as HTMLInputElement;
-                      const codeInput = document.getElementById("new-agent-code") as HTMLInputElement;
-                      const roleInput = document.getElementById("new-agent-role") as HTMLSelectElement;
-                      
-                      if (nameInput.value && codeInput.value) {
-                        const newUsers = [...users, { 
-                          name: nameInput.value.toUpperCase(), 
-                          code: codeInput.value, 
-                          role: roleInput.value as "ADMIN" | "AGENT" 
-                        }];
-                        setUsers(newUsers);
-                        window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
-                        
-                        nameInput.value = "";
-                        codeInput.value = "";
-                        alert(`Utilisateur ${nameInput.value} ajouté !`);
-                      }
-                    }}
-                    style={{ padding: "8px 16px", background: "#d97706", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
-                  >
-                    Ajouter
-                  </button>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
                   {users.map((u, i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: u.role === "ADMIN" ? "#b45309" : "#1e3a5f" }}>
-                          {u.role === "ADMIN" ? "🛡️" : "👤"} {u.name}
+                    <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8, padding: "14px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 15, color: u.role === "ADMIN" ? "#b45309" : "#1e3a5f" }}>
+                            {u.role === "ADMIN" ? "🛡️" : "👤"} {u.name}
+                          </div>
+                          {u.customRole && <div style={{ fontSize: 12, color: "#4b5563", fontStyle: "italic" }}>{u.customRole}</div>}
+                          <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace", marginTop: 2 }}>Code: {u.code}</div>
                         </div>
-                        <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>Code: {u.code}</div>
+                        {users.length > 1 && (
+                          <button 
+                            onClick={() => {
+                              if (window.confirm(`Supprimer l'accès pour ${u.name} ?`)) {
+                                const newUsers = users.filter((_, idx) => idx !== i);
+                                setUsers(newUsers);
+                                window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
+                              }
+                            }}
+                            style={{ border: "none", background: "#fee2e2", color: "#b91c1c", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                          >
+                            Supprimer
+                          </button>
+                        )}
                       </div>
-                      {users.length > 1 && (
-                        <button 
-                          onClick={() => {
-                            if (window.confirm(`Supprimer l'accès pour ${u.name} ?`)) {
-                              const newUsers = users.filter((_, idx) => idx !== i);
-                              setUsers(newUsers);
-                              window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
-                            }
-                          }}
-                          style={{ border: "none", background: "#fee2e2", color: "#b91c1c", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
-                        >
-                          Supprimer
-                        </button>
-                      )}
+                      
+                      {/* Allowed Fleets Display */}
+                      <div style={{ fontSize: 11, color: "#64748b", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
+                        <span style={{ fontWeight: 600 }}>Accès : </span>
+                        {(!u.allowedFleets || u.allowedFleets.length === 0) 
+                          ? <span style={{ color: "#16a34a" }}>Toutes les flottes</span>
+                          : u.allowedFleets.map((fid: string) => fleets.find(f => f.id === fid)?.name || fid).join(", ")
+                        }
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -971,33 +1160,82 @@ Cellule de Relance Yango`}
             )}
 
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", padding: 20 }}>
-              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>👥 Performance des Agents</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 16 }}>
-                {Object.entries(agentSessions).map(([name, data]: [string, any]) => {
-                  const hours = Math.floor((data.totalTime || 0) / 3600000);
-                  const mins = Math.floor(((data.totalTime || 0) % 3600000) / 60000);
-                  return (
-                    <div key={name} style={{ background: "#f8fafc", borderRadius: 12, padding: 16, border: "1px solid #e2e8f0" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                        <div style={{ fontWeight: 700, fontSize: 16, color: "#1e3a5f" }}>{name}</div>
-                        {name === currentAgent && <span style={{ fontSize: 10, background: "#dbeafe", color: "#1d4ed8", padding: "2px 8px", borderRadius: 99, fontWeight: 700 }}>ACTIF</span>}
-                      </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                        <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #f1f5f9" }}>
-                          <div style={{ fontSize: 20, fontWeight: 800, color: "#1d4ed8" }}>{data.calls || 0}</div>
-                          <div style={{ fontSize: 11, color: "#64748b" }}>Appels</div>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>👥 État des Agents</div>
+              
+              {/* ONLINE AGENTS */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 8, height: 8, background: "#22c55e", borderRadius: "50%", boxShadow: "0 0 0 2px #bbf7d0" }}></span>
+                  EN LIGNE (Actifs &lt; 5 min)
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 16 }}>
+                  {Object.entries(agentSessions)
+                    .filter(([_, data]: [string, any]) => data.lastActive && (Date.now() - data.lastActive) < 5 * 60 * 1000)
+                    .map(([name, data]: [string, any]) => {
+                      const hours = Math.floor((data.totalTime || 0) / 3600000);
+                      const mins = Math.floor(((data.totalTime || 0) % 3600000) / 60000);
+                      return (
+                        <div key={name} style={{ background: "#f0fdf4", borderRadius: 12, padding: 16, border: "1px solid #bbf7d0", boxShadow: "0 2px 4px rgba(0,0,0,0.02)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                            <div style={{ fontWeight: 700, fontSize: 16, color: "#166534" }}>{name}</div>
+                            {name === currentAgent && <span style={{ fontSize: 10, background: "#166534", color: "#fff", padding: "2px 8px", borderRadius: 99, fontWeight: 700 }}>MOI</span>}
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #dcfce7" }}>
+                              <div style={{ fontSize: 20, fontWeight: 800, color: "#15803d" }}>{data.calls || 0}</div>
+                              <div style={{ fontSize: 11, color: "#64748b" }}>Appels</div>
+                            </div>
+                            <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #dcfce7" }}>
+                              <div style={{ fontSize: 20, fontWeight: 800, color: "#15803d" }}>{hours}h{mins}</div>
+                              <div style={{ fontSize: 11, color: "#64748b" }}>Temps total</div>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#166534", marginTop: 12, textAlign: "right", fontWeight: 600 }}>
+                            🟢 Actif à l'instant
+                          </div>
                         </div>
-                        <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #f1f5f9" }}>
-                          <div style={{ fontSize: 20, fontWeight: 800, color: "#059669" }}>{hours}h{mins}</div>
-                          <div style={{ fontSize: 11, color: "#64748b" }}>Temps total</div>
+                      );
+                    })}
+                    {Object.entries(agentSessions).filter(([_, data]: [string, any]) => data.lastActive && (Date.now() - data.lastActive) < 5 * 60 * 1000).length === 0 && (
+                      <div style={{ fontSize: 13, color: "#9ca3af", fontStyle: "italic" }}>Aucun agent en ligne (à part vous peut-être ?)</div>
+                    )}
+                </div>
+              </div>
+
+              {/* OFFLINE AGENTS */}
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#64748b", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 8, height: 8, background: "#cbd5e1", borderRadius: "50%" }}></span>
+                  HORS LIGNE / HISTORIQUE
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 16 }}>
+                  {Object.entries(agentSessions)
+                    .filter(([_, data]: [string, any]) => !data.lastActive || (Date.now() - data.lastActive) >= 5 * 60 * 1000)
+                    .map(([name, data]: [string, any]) => {
+                      const hours = Math.floor((data.totalTime || 0) / 3600000);
+                      const mins = Math.floor(((data.totalTime || 0) % 3600000) / 60000);
+                      return (
+                        <div key={name} style={{ background: "#f8fafc", borderRadius: 12, padding: 16, border: "1px solid #e2e8f0", opacity: 0.8 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                            <div style={{ fontWeight: 700, fontSize: 16, color: "#64748b" }}>{name}</div>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #f1f5f9" }}>
+                              <div style={{ fontSize: 20, fontWeight: 800, color: "#94a3b8" }}>{data.calls || 0}</div>
+                              <div style={{ fontSize: 11, color: "#94a3b8" }}>Appels</div>
+                            </div>
+                            <div style={{ background: "#fff", padding: 10, borderRadius: 8, textAlign: "center", border: "1px solid #f1f5f9" }}>
+                              <div style={{ fontSize: 20, fontWeight: 800, color: "#94a3b8" }}>{hours}h{mins}</div>
+                              <div style={{ fontSize: 11, color: "#94a3b8" }}>Temps total</div>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 12, textAlign: "right" }}>
+                            Dernière activité : {data.lastActive ? new Date(data.lastActive).toLocaleString() : "—"}
+                          </div>
                         </div>
-                      </div>
-                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 12, textAlign: "right" }}>
-                        Dernière activité : {data.lastActive ? new Date(data.lastActive).toLocaleTimeString() : "—"}
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                </div>
               </div>
             </div>
 
@@ -1024,6 +1262,21 @@ Cellule de Relance Yango`}
           </div>
         )}
 
+        {/* GOLD TAB */}
+        {activeTab === "gold" && (
+          <GoldTab 
+            drivers={fleetDrivers} 
+            recruits={recruits} 
+            currentFleetId={currentFleetId}
+            onAddRecruit={(phone, date, name) => setRecruits(prev => ({ ...prev, [phone]: `${date}|${name || ""}|${currentFleetId !== "ALL" ? currentFleetId : ""}` }))}
+            onRemoveRecruit={(phone) => setRecruits(prev => {
+              const next = { ...prev };
+              delete next[phone];
+              return next;
+            })}
+          />
+        )}
+
         {/* HISTORIQUE */}
         {activeTab === "historique" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 960 }}>
@@ -1040,7 +1293,8 @@ Cellule de Relance Yango`}
                 try { await window.storage.delete("flotte_history"); } catch (e) { }
                 try { await window.storage.delete("flotte_agent"); } catch (e) { }
                 try { await window.storage.delete("flotte_totalcalls"); } catch (e) { }
-                setDrivers(generateSampleDrivers()); setImportHistory([]); setCurrentAgent(""); setTotalCalls(0);
+                try { await window.storage.delete("flotte_recruits"); } catch (e) { }
+                setDrivers(generateSampleDrivers()); setImportHistory([]); setCurrentAgent(""); setTotalCalls(0); setRecruits({});
               }} style={{ padding: "8px 14px", background: "#fee2e2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
                 🗑️ Tout effacer
               </button>
