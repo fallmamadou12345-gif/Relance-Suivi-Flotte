@@ -17,7 +17,10 @@ export default function CallBtn({ driver, onCallClick, compact }: { driver: any,
 
   return (
     <RippleBtn
-      onClick={handle}
+      onClick={(e) => {
+        handle(e);
+        window.location.href = `tel:${driver.tel}`;
+      }}
       style={{
         padding: compact ? "5px 10px" : "8px 14px",
         borderRadius: 8,

@@ -24,6 +24,9 @@ export default function GoldTab({ drivers, recruits, currentFleetId, onAddRecrui
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
 
+  const [filterStatus, setFilterStatus] = useState("ALL"); // ALL, SUCCESS, FAILED, PROGRESS
+  const [listSearch, setListSearch] = useState("");
+
   const availableMonths = useMemo(() => {
     const months = new Set<string>();
     const d = new Date();
@@ -44,14 +47,12 @@ export default function GoldTab({ drivers, recruits, currentFleetId, onAddRecrui
       const parts = value.split('|');
       const date = parts[0];
       const savedName = parts[1];
-      const fleetId = parts[2]; // Optional
+      const fleetId = parts[2];
+      const importedStatus = parts[3]; // "INSCRIT" or "DONNÉES INSUFF."
 
       // Filter by fleet if specified
       if (currentFleetId !== "ALL") {
-        // If recruit has a fleet ID, it MUST match
         if (fleetId && fleetId !== currentFleetId) return null;
-        // If recruit has NO fleet ID (legacy), we only show it in "ALL" view to avoid pollution,
-        // UNLESS the driver is found in the current fleet list (which means they belong to this fleet).
       }
 
       // Filter by Selected Month
@@ -60,12 +61,16 @@ export default function GoldTab({ drivers, recruits, currentFleetId, onAddRecrui
       // Find driver in the main list to get real-time stats
       const driver = drivers.find(d => d.tel === phone || d.phone === phone || d.telephone === phone);
       
-      // If filtering by fleet, and no fleetId recorded, ONLY show if driver is found in this fleet
       if (currentFleetId !== "ALL" && !fleetId && !driver) return null;
 
       const name = driver ? driver.nom : (savedName || "Inconnu");
       const rides = driver ? (parseInt(driver.commandes) || 0) : 0;
       
+      // Search filter
+      if (listSearch && !name.toLowerCase().includes(listSearch.toLowerCase()) && !phone.includes(listSearch)) {
+        return null;
+      }
+
       // Parse date manually to ensure local time comparison
       const [y, m, d] = date.split('-').map(Number);
       const startDate = new Date(y, m - 1, d);
@@ -79,11 +84,19 @@ export default function GoldTab({ drivers, recruits, currentFleetId, onAddRecrui
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
       const daysRemaining = 30 - diffDays;
       
-      // Updated Logic:
-      // Success: Reached 50 rides (regardless of time, assuming they did it within the window or we just care about the total)
-      // Failed: Did NOT reach 50 rides AND 30 days have passed.
       const success = rides >= 50;
       const failed = rides < 50 && diffDays > 30;
+      const inProgress = !success && !failed;
+
+      let status = importedStatus || "INSCRIT";
+      if (success) status = "GOLD";
+      else if (failed) status = "ÉCHOUÉ";
+      else if (inProgress && status !== "DONNÉES INSUFF.") status = "EN COURS";
+
+      // Status filter
+      if (filterStatus === "SUCCESS" && status !== "GOLD") return null;
+      if (filterStatus === "FAILED" && status !== "ÉCHOUÉ") return null;
+      if (filterStatus === "PROGRESS" && status !== "EN COURS" && status !== "INSCRIT") return null;
       
       return { 
         phone, 
@@ -91,21 +104,18 @@ export default function GoldTab({ drivers, recruits, currentFleetId, onAddRecrui
         name, 
         rides, 
         daysRemaining, 
-        success, 
-        failed,
+        status,
+        isAuto: !!fleetId,
         formattedDate: startDate.toLocaleDateString('fr-FR'),
         formattedEndDate: endDate.toLocaleDateString('fr-FR')
       };
     })
     .filter(Boolean)
-    // Removed the .filter(daysRemaining >= 0) to allow viewing past months
     .sort((a: any, b: any) => {
-        // Sort: Success first, then by rides descending
-        if (a.success && !b.success) return -1;
-        if (!a.success && b.success) return 1;
-        return b.rides - a.rides;
+        // Sort by date: Oldest to Newest
+        return a.date.localeCompare(b.date);
     });
-  }, [recruits, drivers, currentFleetId, selectedMonth]);
+  }, [recruits, drivers, currentFleetId, selectedMonth, filterStatus, listSearch]);
 
   const handleAdd = () => {
     if (!newPhone) return;
@@ -176,76 +186,123 @@ export default function GoldTab({ drivers, recruits, currentFleetId, onAddRecrui
         </button>
       </div>
 
+      {/* Filter Bar */}
+      <div style={{ 
+        background: "#fff", padding: "16px 20px", borderRadius: 16, marginBottom: 20,
+        display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.1)", border: "1px solid #e2e8f0"
+      }}>
+        <div style={{ flex: 1, minWidth: 200, position: "relative" }}>
+          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>🔍</span>
+          <input 
+            type="text" 
+            placeholder="Rechercher par nom ou téléphone..." 
+            value={listSearch}
+            onChange={e => setListSearch(e.target.value)}
+            style={{ 
+              width: "100%", padding: "10px 12px 10px 36px", borderRadius: 10, 
+              border: "1px solid #e2e8f0", fontSize: 14, outline: "none" 
+            }}
+          />
+        </div>
+        
+        <div style={{ display: "flex", gap: 8 }}>
+          {[
+            { id: "ALL", label: "Tous", color: "#64748b" },
+            { id: "PROGRESS", label: "En cours", color: "#3b82f6" },
+            { id: "SUCCESS", label: "Succès", color: "#22c55e" },
+            { id: "FAILED", label: "Échecs", color: "#ef4444" }
+          ].map(f => (
+            <button
+              key={f.id}
+              onClick={() => setFilterStatus(f.id)}
+              style={{
+                padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                cursor: "pointer", border: "none", transition: "all 0.2s",
+                background: filterStatus === f.id ? f.color : "#f1f5f9",
+                color: filterStatus === f.id ? "#fff" : "#64748b"
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {recruitList.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 20px", background: "#fff", borderRadius: 16, border: "2px dashed #e2e8f0" }}>
           <div style={{ fontSize: 40, marginBottom: 16 }}>🚕</div>
-          <h3 style={{ color: "#1e293b", fontWeight: 700, marginBottom: 8 }}>Aucune recrue suivie</h3>
-          <p style={{ color: "#64748b" }}>Ajoutez des chauffeurs pour suivre leur progression vers l'objectif Gold.</p>
+          <h3 style={{ color: "#1e293b", fontWeight: 700, marginBottom: 8 }}>Aucune recrue trouvée</h3>
+          <p style={{ color: "#64748b" }}>Modifiez vos filtres ou ajoutez de nouveaux chauffeurs.</p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
-          {recruitList.map(r => (
-            <div key={r.phone} style={{ 
-              background: "#fff", borderRadius: 16, padding: 20, 
-              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)", 
-              border: r.success ? "2px solid #22c55e" : r.failed ? "2px solid #ef4444" : "1px solid #e2e8f0",
-              position: "relative", overflow: "hidden"
-            }}>
-              {r.success && (
-                <div style={{ position: "absolute", top: 0, right: 0, background: "#22c55e", color: "#fff", padding: "4px 12px", borderRadius: "0 0 0 12px", fontSize: 11, fontWeight: 800 }}>
-                  OBJECTIF ATTEINT
-                </div>
-              )}
-              
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 17, color: "#0f172a", marginBottom: 2 }}>{r.name}</div>
-                  <div style={{ fontSize: 13, color: "#64748b", fontFamily: "monospace", marginBottom: 4 }}>{r.phone}</div>
-                  <div style={{ fontSize: 11, color: "#64748b", display: "flex", flexDirection: "column" }}>
-                    <span>Inscrit le {r.formattedDate}</span>
-                    <span style={{ color: "#94a3b8" }}>Fin le {r.formattedEndDate}</span>
-                  </div>
-                </div>
-                {!r.success && !r.failed && (
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 24, fontWeight: 800, color: "#3b82f6", lineHeight: 1 }}>{r.daysRemaining}</div>
-                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>Jours restants</div>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-                  <span style={{ color: "#64748b", fontWeight: 500 }}>Progression courses</span>
-                  <span style={{ fontWeight: 800, color: r.success ? "#166534" : "#0f172a" }}>{r.rides} / 50</span>
-                </div>
-                <div style={{ height: 10, background: "#f1f5f9", borderRadius: 5, overflow: "hidden" }}>
-                  <div style={{ 
-                    width: `${Math.min(100, (r.rides / 50) * 100)}%`, 
-                    background: r.success ? "#22c55e" : r.failed ? "#ef4444" : "linear-gradient(90deg, #3b82f6, #60a5fa)", 
-                    height: "100%",
-                    transition: "width 1s ease-out"
-                  }}></div>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, borderTop: "1px solid #f1f5f9", paddingTop: 12 }}>
-                <div style={{ color: "#64748b" }}>
-                  Inscrit le <span style={{ fontWeight: 600, color: "#334155" }}>{new Date(r.date).toLocaleDateString()}</span>
-                </div>
-                <button 
-                  onClick={() => {
-                    if (confirm("Supprimer ce chauffeur du suivi Gold ?")) onRemoveRecruit(r.phone);
-                  }} 
-                  style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer", fontWeight: 600, padding: "4px 8px", borderRadius: 6 }}
-                  onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
-                  onMouseOut={e => e.currentTarget.style.color = "#94a3b8"}
-                >
-                  Retirer
-                </button>
-              </div>
-            </div>
-          ))}
+        <div style={{ background: "#fff", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05)", border: "1px solid #e2e8f0" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+            <thead>
+              <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                <th style={{ padding: "16px 20px", fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Date Inscr.</th>
+                <th style={{ padding: "16px 20px", fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Chauffeur</th>
+                <th style={{ padding: "16px 20px", fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Progression</th>
+                <th style={{ padding: "16px 20px", fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Statut</th>
+                <th style={{ padding: "16px 20px", fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Fin Objectif</th>
+                <th style={{ padding: "16px 20px", textAlign: "right" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {recruitList.map(r => (
+                <tr key={r.phone} style={{ borderBottom: "1px solid #f1f5f9", transition: "background 0.2s" }} onMouseOver={e => e.currentTarget.style.background = "#f8fafc"} onMouseOut={e => e.currentTarget.style.background = "transparent"}>
+                  <td style={{ padding: "16px 20px", fontSize: 14, fontWeight: 600, color: "#334155" }}>{r.formattedDate}</td>
+                  <td style={{ padding: "16px 20px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#0f172a" }}>{r.name}</div>
+                      {r.isAuto && <span style={{ fontSize: 10, background: "#f1f5f9", color: "#64748b", padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>AUTO</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#64748b", fontFamily: "monospace" }}>{r.phone}</div>
+                  </td>
+                  <td style={{ padding: "16px 20px", width: 200 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                      <span style={{ fontWeight: 800, color: r.status === "GOLD" ? "#166534" : "#0f172a" }}>{r.rides} / 50</span>
+                      <span style={{ color: "#94a3b8" }}>{Math.round((r.rides / 50) * 100)}%</span>
+                    </div>
+                    <div style={{ height: 6, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ 
+                        width: `${Math.min(100, (r.rides / 50) * 100)}%`, 
+                        background: r.status === "GOLD" ? "#22c55e" : r.status === "ÉCHOUÉ" ? "#ef4444" : "#3b82f6", 
+                        height: "100%",
+                        transition: "width 1s ease-out"
+                      }}></div>
+                    </div>
+                  </td>
+                  <td style={{ padding: "16px 20px" }}>
+                    {r.status === "GOLD" ? (
+                      <span style={{ background: "#dcfce7", color: "#15803d", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800 }}>🏆 GOLD</span>
+                    ) : r.status === "ÉCHOUÉ" ? (
+                      <span style={{ background: "#fee2e2", color: "#b91c1c", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800 }}>❌ ÉCHOUÉ</span>
+                    ) : r.status === "DONNÉES INSUFF." ? (
+                      <span style={{ background: "#fef3c7", color: "#92400e", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800 }} title="Première course avant la date d'ajout">⚠️ INSUFF.</span>
+                    ) : (
+                      <span style={{ background: "#eff6ff", color: "#1d4ed8", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800 }}>
+                        {r.status === "INSCRIT" ? "🆕 INSCRIT" : `${r.daysRemaining}J RESTANTS`}
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ padding: "16px 20px", fontSize: 13, color: "#64748b" }}>{r.formattedEndDate}</td>
+                  <td style={{ padding: "16px 20px", textAlign: "right" }}>
+                    <button 
+                      onClick={() => {
+                        if (confirm("Supprimer ce chauffeur du suivi Gold ?")) onRemoveRecruit(r.phone);
+                      }} 
+                      style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer", fontWeight: 600, padding: "4px 8px", borderRadius: 6 }}
+                      onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
+                      onMouseOut={e => e.currentTarget.style.color = "#94a3b8"}
+                    >
+                      Retirer
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

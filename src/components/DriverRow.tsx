@@ -1,24 +1,37 @@
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import ZoneBadge from "./ZoneBadge";
 import SoldeBar from "./SoldeBar";
 import CallBtn from "./CallBtn";
 import RippleBtn from "./RippleBtn";
-import { CODES_COMMENTAIRE } from "../constants";
+import { CODES_COMMENTAIRE, INITIAL_FLEETS } from "../constants";
 
 interface DriverRowProps {
   driver: any;
   onComment: (id: string, comment: string) => void;
   onCallClick: (id: string) => void;
   onWaClick: (id: string) => void;
+  currentAgent?: string;
+  fleets?: any[];
 }
 
-const DriverRow: React.FC<DriverRowProps> = ({ driver, onComment, onCallClick, onWaClick }) => {
+const DriverRow: React.FC<DriverRowProps> = ({ driver, onComment, onCallClick, onWaClick, currentAgent, fleets = INITIAL_FLEETS }) => {
   const [expanded, setExpanded] = useState(false);
   const [editComment, setEditComment] = useState(false);
   const [localComment, setLocalComment] = useState(driver.commentaire || "");
   const [flash, setFlash] = useState(false);
   const prevCount = useRef(driver._callCount);
+
+  const fleetName = useMemo(() => {
+    const f = fleets.find(fl => fl.id === driver.fleetId);
+    return f ? f.name : "Yango";
+  }, [fleets, driver.fleetId]);
+
+  const personalizedSms = useMemo(() => {
+    const agentName = currentAgent || "Votre Agent";
+    const msg = `Bonjour ${driver.nom}, c'est ${agentName} de la flotte ${fleetName}. Nous avons remarqué que vous n'avez pas roulé depuis ${driver.jours_inactif || 0} jours. Y a-t-il un problème que nous pouvons aider à résoudre ?`;
+    return encodeURIComponent(msg);
+  }, [driver.nom, driver.jours_inactif, currentAgent, fleetName]);
 
   useEffect(() => {
     if (driver._callCount > prevCount.current) {
@@ -222,16 +235,23 @@ const DriverRow: React.FC<DriverRowProps> = ({ driver, onComment, onCallClick, o
               <div>
                 <div style={{ fontSize: 11, color: "#9ca3af", fontWeight: 700, marginBottom: 8, letterSpacing: "0.08em" }}>ACTIONS</div>
                 <RippleBtn
-                  onClick={e => { e.stopPropagation(); onCallClick(driver.id); }}
+                  onClick={e => { 
+                    e.stopPropagation(); 
+                    onCallClick(driver.id);
+                    window.location.href = `tel:${driver.tel}`;
+                  }}
                   style={{
                     width: "100%", padding: "10px", background: "#1d4ed8", color: "#fff", border: "none",
                     borderRadius: 8, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6
                   }}
                 >
-                  📞 Passer un appel
+                  📞 Appeler (Mobile Connect)
                 </RippleBtn>
                 <RippleBtn
-                  onClick={e => { e.stopPropagation(); onWaClick(driver.id); }}
+                  onClick={e => { 
+                    e.stopPropagation(); 
+                    onWaClick(driver.id); 
+                  }}
                   style={{
                     marginTop: 8, width: "100%", padding: "10px", background: "#25d366", color: "#fff", border: "none",
                     borderRadius: 8, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6
@@ -240,15 +260,18 @@ const DriverRow: React.FC<DriverRowProps> = ({ driver, onComment, onCallClick, o
                   <span style={{ fontSize: 18 }}>💬</span> WhatsApp
                 </RippleBtn>
                 <a
-                  href={`sms:${driver.tel}`}
-                  onClick={e => e.stopPropagation()}
+                  href={`sms:${driver.tel}?body=${personalizedSms}`}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onWaClick(driver.id); // Also log as a contact attempt
+                  }}
                   style={{
                     marginTop: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                     padding: "10px", background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac",
                     borderRadius: 8, textDecoration: "none", fontSize: 14, fontWeight: 700
                   }}
                 >
-                  ✉️ SMS classique
+                  ✉️ SMS Personnalisé
                 </a>
                 <div style={{ marginTop: 8, padding: "8px 10px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 12, color: "#374151" }}>
                   {driver._callCount === 0 ? (

@@ -1,9 +1,9 @@
 
 export const INITIAL_FLEETS = [
-  { id: "diagne", name: "Diagne Transport" },
-  { id: "ndongo", name: "Transport Ndongo Fall" },
-  { id: "sy", name: "Sy Transport" },
-  { id: "autres", name: "Autres Parcs" }
+  { id: "diagne", name: "Diagne Transport", phone: "+221 77 123 45 67" },
+  { id: "ndongo", name: "Transport Ndongo Fall", phone: "+221 78 987 65 43" },
+  { id: "sy", name: "Sy Transport", phone: "+221 70 111 22 33" },
+  { id: "autres", name: "Autres Parcs", phone: "+221 33 800 00 00" }
 ];
 
 export const CODES_COMMENTAIRE = ["[PANNE]", "[SOLDE]", "[DOCS]", "[MALADE]", "[RAPPEL]", "[RÉSOLU]"];
@@ -13,12 +13,43 @@ export const AGENTS = [
   "NDONGO GAYE", "MAISSA SALL", "Thierno sadou Diallo", "COUMBA NIANG", "NDÉYE FALL"
 ];
 
+export const MESSAGE_TONES = {
+  PRO: "Professionnel",
+  FRIENDLY: "Amical",
+  URGENT: "Urgent",
+  GOLD: "Félicitations Gold"
+};
+
 export const WA_TEMPLATES = {
-  ROUGE: (nom: string) => `Bonjour ${nom} 🚨, nous avons remarqué que vous n'avez pas effectué de course depuis plusieurs jours. Votre compte risque d'être archivé sous 48h. Pouvez-vous nous contacter pour qu'on vous aide ? 🤝`,
-  ORANGE: (nom: string) => `Bonjour ${nom} 👋, nous espérons que tout va bien ! Saviez-vous que des *bonus sont disponibles* cette semaine sur Yango ? N'hésitez pas à vous connecter pour en profiter 🚕`,
-  NOUVEAU: (nom: string) => `Bienvenue sur Yango ${nom} ! 🎉 Nous sommes ravis de vous compter parmi nos chauffeurs. Besoin d'aide pour votre première connexion ? Répondez à ce message, nous sommes là pour vous 🚀`,
-  OK: (nom: string) => `Bonjour ${nom}, merci pour votre activité sur Yango ! 🌟 N'hésitez pas si vous avez des questions.`,
-  SOLDE: (nom: string) => `Bonjour ${nom}, votre solde actuel ne vous permet plus de prendre des courses. Veuillez effectuer un versement pour reprendre votre activité. Pour tout renseignement, contactez-nous 📞`,
+  ROUGE: (nom: string, fleet: string, tone: string = "PRO", agent: string = "Votre conseiller", fleetPhone: string = "") => {
+    const intro = `Bonjour ${nom}, c'est ${agent} de ${fleet}.`;
+    const contact = fleetPhone ? ` Vous pouvez nous joindre au ${fleetPhone}.` : "";
+    const signature = `\n\nCordialement,\nL'équipe ${fleet}`;
+    
+    if (tone === "FRIENDLY") return `Salut ${nom} 👋, c'est ${agent} de ${fleet}. On s'inquiète un peu car on ne te voit plus sur la route. Tout va bien ? N'hésite pas à me faire signe si tu as besoin d'aide ! 🤝${signature}`;
+    if (tone === "URGENT") return `ALERTE ${nom} 🚨! Ici ${agent} (${fleet}). Votre compte risque d'être archivé sous 24h. Contactez-nous d'urgence au ${fleetPhone || "votre agence"} pour éviter le blocage définitif. 📞${signature}`;
+    return `${intro} Nous constatons une inactivité prolongée. Merci de nous contacter pour faire le point sur votre situation.${contact}${signature}`;
+  },
+  ORANGE: (nom: string, fleet: string, tone: string = "PRO", agent: string = "Votre conseiller", fleetPhone: string = "") => {
+    const intro = `Bonjour ${nom}, c'est ${agent} de ${fleet}.`;
+    const signature = `\n\nCordialement,\nL'équipe ${fleet}`;
+    if (tone === "FRIENDLY") return `Coucou ${nom} ! 😊 C'est ${agent}. Des nouveaux bonus t'attendent chez ${fleet} cette semaine. Ne les laisse pas passer, on compte sur toi ! 🚕${signature}`;
+    if (tone === "URGENT") return `Attention ${nom} ⚠️, votre activité chez ${fleet} est en baisse. Reprenez la route aujourd'hui pour sécuriser vos revenus. Besoin d'aide ? Appelez-moi au ${fleetPhone || "l'agence"}.${signature}`;
+    return `${intro} Nous vous informons que des opportunités de gains sont disponibles. Nous vous encourageons à reprendre votre activité rapidement.${signature}`;
+  },
+  NOUVEAU: (nom: string, fleet: string, tone: string = "PRO", agent: string = "Votre conseiller") => {
+    const signature = `\n\nBienvenue chez ${fleet} !`;
+    if (tone === "FRIENDLY") return `Bienvenue dans la famille ${fleet}, ${nom} ! 🎉 C'est ${agent}, je suis ravi de t'accompagner. Si tu as la moindre question pour tes premières courses, je suis là ! 🚀${signature}`;
+    return `Bonjour ${nom}, bienvenue chez ${fleet}. Je suis ${agent}, votre interlocuteur dédié. Votre compte est prêt, n'hésitez pas à me solliciter pour vos débuts.${signature}`;
+  },
+  GOLD: (nom: string, fleet: string, tone: string = "PRO", agent: string = "Votre conseiller") => {
+    const signature = `\n\nL'équipe ${fleet}`;
+    return `Félicitations ${nom} ! 🏆 Vous avez atteint l'objectif Gold chez ${fleet}. Votre recrutement est officiellement validé. Continuez sur cette lancée ! 🚀${signature}`;
+  },
+  SOLDE: (nom: string, fleet: string, tone: string = "PRO", agent: string = "Votre conseiller", fleetPhone: string = "") => 
+    `Bonjour ${nom}, c'est ${agent} (${fleet}). Votre solde est insuffisant pour continuer. Merci de recharger ou de nous appeler au ${fleetPhone || "l'agence"}.\n\nL'équipe ${fleet}`,
+  OK: (nom: string, fleet: string, tone: string = "PRO", agent: string = "Votre conseiller") => 
+    `Bonjour ${nom}, c'est ${agent} de ${fleet}. Merci pour votre excellent travail ! 🌟\n\nL'équipe ${fleet}`,
 };
 
 export const ZONE_CONFIG: Record<string, any> = {

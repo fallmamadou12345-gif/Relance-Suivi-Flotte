@@ -7,3 +7,7 @@ interface Window {
     delete: (key: string) => Promise<void>;
   };
 }
+
+interface ImportMeta {
+  env: Record<string, string>;
+}

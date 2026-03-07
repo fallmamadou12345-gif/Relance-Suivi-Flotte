@@ -11,6 +11,10 @@ import Toast from "./components/Toast";
 import LoginModal from "./components/LoginModal";
 import SettingsModal from "./components/SettingsModal";
 import GoldTab from "./components/GoldTab";
+import ZoneBadge from "./components/ZoneBadge";
+
+import { db } from "./firebase";
+import { collection, doc, setDoc, getDocs, onSnapshot, query, limit, orderBy } from "firebase/firestore";
 
 const PER_PAGE = 30;
 
@@ -18,14 +22,18 @@ export default function App() {
   const [drivers, setDrivers] = useState<any[]>(() => generateSampleDrivers());
   const [importHistory, setImportHistory] = useState<any[]>([]);
   const [storageReady, setStorageReady] = useState(false);
+  const [firebaseActive, setFirebaseActive] = useState(false);
   const [modal, setModal] = useState<{ driverId: string } | null>(null);
   const [waModal, setWaModal] = useState<{ driverId: string } | null>(null);
   const [currentAgent, setCurrentAgent] = useState("");
-  const [userRole, setUserRole] = useState<"ADMIN" | "AGENT" | null>(null);
+  const [userRole, setUserRole] = useState<"SUPER_ADMIN" | "ADMIN_PARC" | "AGENT" | null>(null);
   const [currentUserFleets, setCurrentUserFleets] = useState<string[]>([]);
   const [currentUserCustomRole, setCurrentUserCustomRole] = useState<string>("");
   const [users, setUsers] = useState<any[]>([
-    { name: "ADMIN", code: "admin", role: "ADMIN", allowedFleets: [], customRole: "Administrateur" },
+    { name: "SUPER ADMIN", code: "super123", role: "SUPER_ADMIN", allowedFleets: [], customRole: "Directeur Général" },
+    { name: "ADMIN_DIAGNE", code: "diagne", role: "ADMIN_PARC", allowedFleets: ["diagne"], customRole: "Responsable Parc Diagne" },
+    { name: "ADMIN_NDONGO", code: "ndongo", role: "ADMIN_PARC", allowedFleets: ["ndongo"], customRole: "Responsable Parc Ndongo" },
+    { name: "ADMIN_SY", code: "sy123", role: "ADMIN_PARC", allowedFleets: ["sy"], customRole: "Responsable Parc Sy" },
     { name: "AGENT", code: "1234", role: "AGENT", allowedFleets: [], customRole: "Agent Support" }
   ]);
   const [agentSessionStart, setAgentSessionStart] = useState<number | null>(null);
@@ -47,6 +55,8 @@ export default function App() {
   const [storageMode, setStorageMode] = useState<"cloud" | "local" | "unknown">("unknown");
   const [showSettings, setShowSettings] = useState(false);
   const [recruits, setRecruits] = useState<Record<string, string>>({});
+  const [reactivations, setReactivations] = useState<any[]>([]);
+  const [lastCommandSnapshot, setLastCommandSnapshot] = useState<Record<string, string>>({});
   
   // Fleet Management
   const [fleets, setFleets] = useState(INITIAL_FLEETS);
@@ -66,14 +76,62 @@ export default function App() {
   // LOAD from storage on mount
   useEffect(() => {
     (async () => {
-      try {
-        const saved = await window.storage.get("flotte_drivers");
-        if (saved && saved.value) {
-          const data = JSON.parse(saved.value);
-          if (data && data.length > 0) setDrivers(data);
+      // 1. Load from Firebase
+      let finalUsers: any[] = [];
+      const isFirebaseConfigured = true;
+      if (isFirebaseConfigured) {
+        try {
+          const driversSnap = await getDocs(collection(db, "drivers"));
+          if (!driversSnap.empty) {
+            const fbDrivers = driversSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setDrivers(fbDrivers);
+            setFirebaseActive(true);
+          }
+          
+          const usersSnap = await getDocs(collection(db, "users"));
+          if (!usersSnap.empty) {
+            finalUsers = usersSnap.docs.map(doc => doc.data());
+          }
+
+          const logsSnap = await getDocs(query(collection(db, "logs"), orderBy("time", "desc"), limit(100)));
+          if (!logsSnap.empty) {
+            setGlobalLogs(logsSnap.docs.map(doc => doc.data()));
+          }
+        } catch (e) {
+          console.error("Firebase load error:", e);
         }
-      } catch (e) { }
+      }
+
+      // 2. Load from Local Storage if Firebase was empty or failed
+      if (finalUsers.length === 0) {
+        try {
+          const u = await window.storage.get("flotte_users");
+          if (u && u.value) {
+            finalUsers = JSON.parse(u.value);
+          }
+        } catch (e) { }
+      }
+
+      // 3. Ensure SUPER ADMIN exists in the final list
+      const hasSuperAdmin = finalUsers.some((u: any) => u.role === "SUPER_ADMIN" || u.name === "SUPER ADMIN");
+      if (!hasSuperAdmin) {
+        // Upgrade old ADMIN or add new SUPER ADMIN
+        const adminIdx = finalUsers.findIndex((u: any) => u.role === "ADMIN");
+        if (adminIdx !== -1) {
+          finalUsers[adminIdx].role = "SUPER_ADMIN";
+          finalUsers[adminIdx].name = "SUPER ADMIN";
+        } else {
+          finalUsers.push({ name: "SUPER ADMIN", code: "admin", role: "SUPER_ADMIN", allowedFleets: [], customRole: "Directeur Général" });
+        }
+        // Save back to ensure it persists
+        window.storage.set("flotte_users", JSON.stringify(finalUsers)).catch(() => {});
+      }
       
+      if (finalUsers.length > 0) {
+        setUsers(finalUsers);
+      }
+
+      // Load other data
       try {
         const savedFleets = await window.storage.get("flotte_fleets");
         if (savedFleets && savedFleets.value) {
@@ -87,8 +145,11 @@ export default function App() {
       } catch (e) { }
 
       try {
-        const u = await window.storage.get("flotte_users");
-        if (u && u.value) setUsers(JSON.parse(u.value));
+        const saved = await window.storage.get("flotte_drivers");
+        if (saved && saved.value) {
+          const data = JSON.parse(saved.value);
+          if (data && data.length > 0) setDrivers(data);
+        }
       } catch (e) { }
 
       try {
@@ -120,10 +181,37 @@ export default function App() {
         if (rec && rec.value) setRecruits(JSON.parse(rec.value));
       } catch (e) { }
 
+      try {
+        const react = await window.storage.get("flotte_reactivated");
+        if (react && react.value) setReactivations(JSON.parse(react.value));
+      } catch (e) { }
+
+      try {
+        const snap = await window.storage.get("flotte_dl_snapshot");
+        if (snap && snap.value) setLastCommandSnapshot(JSON.parse(snap.value));
+      } catch (e) { }
+
       setStorageReady(true);
       setStorageMode(window.storage.mode);
     })();
   }, []);
+
+  // SAVE to Firebase
+  useEffect(() => {
+    if (!firebaseActive || !storageReady) return;
+    const sync = async () => {
+      try {
+        // Sync drivers (chunked or individual)
+        // For simplicity in this demo, we sync individual docs that changed
+        // But here we just sync the whole collection if it's small enough
+        for (const d of drivers) {
+          await setDoc(doc(db, "drivers", d.id), d);
+        }
+      } catch (e) { console.error("Firebase sync error:", e); }
+    };
+    const t = setTimeout(sync, 5000);
+    return () => clearTimeout(t);
+  }, [drivers, firebaseActive, storageReady]);
 
   // SAVE sessions & logs & fleets
   useEffect(() => {
@@ -133,6 +221,8 @@ export default function App() {
       try { await window.storage.set("flotte_logs", JSON.stringify(globalLogs)); } catch (e) { }
       try { await window.storage.set("flotte_users", JSON.stringify(users)); } catch (e) { }
       try { await window.storage.set("flotte_recruits", JSON.stringify(recruits)); } catch (e) { }
+      try { await window.storage.set("flotte_reactivated", JSON.stringify(reactivations)); } catch (e) { }
+      try { await window.storage.set("flotte_dl_snapshot", JSON.stringify(lastCommandSnapshot)); } catch (e) { }
       try { await window.storage.set("flotte_fleets", JSON.stringify(fleets)); } catch (e) { }
     };
     const t = setTimeout(save, 2000);
@@ -188,12 +278,20 @@ export default function App() {
   const fleetDrivers = useMemo(() => {
     // 1. Filter by User Access
     let accessibleDrivers = drivers;
-    if (userRole !== "ADMIN" && currentUserFleets.length > 0) {
-      accessibleDrivers = drivers.filter(d => currentUserFleets.includes(d.fleetId));
+    
+    if (userRole !== "SUPER_ADMIN") {
+      if (currentUserFleets.length > 0) {
+        accessibleDrivers = drivers.filter(d => currentUserFleets.includes(d.fleetId));
+      } else {
+        // STRICT ACCESS: If no fleets assigned, show nothing
+        return [];
+      }
     }
 
     // 2. Filter by Selected Fleet
-    if (currentFleetId === "ALL") return accessibleDrivers;
+    if (userRole === "SUPER_ADMIN" && currentFleetId === "ALL") return accessibleDrivers;
+    
+    // For agents, currentFleetId will always be a specific ID from their allowed list
     return accessibleDrivers.filter(d => d.fleetId === currentFleetId);
   }, [drivers, currentFleetId, userRole, currentUserFleets]);
 
@@ -239,7 +337,8 @@ export default function App() {
 
   // Filter available fleets based on user access
   const availableFleets = useMemo(() => {
-    if (userRole === "ADMIN" || currentUserFleets.length === 0) return fleets;
+    if (userRole === "SUPER_ADMIN") return fleets;
+    if (currentUserFleets.length === 0) return []; // No access
     return fleets.filter(f => currentUserFleets.includes(f.id));
   }, [fleets, userRole, currentUserFleets]);
 
@@ -253,9 +352,17 @@ export default function App() {
   const handleLogin = (user: any) => {
     setCurrentAgent(user.name);
     setUserRole(user.role);
-    setCurrentUserFleets(user.allowedFleets || []);
+    const allowed = user.allowedFleets || [];
+    setCurrentUserFleets(allowed);
     setCurrentUserCustomRole(user.customRole || "");
     
+    // Set default fleet to first allowed if not super admin
+    if (user.role !== "SUPER_ADMIN" && allowed.length > 0) {
+      setCurrentFleetId(allowed[0]);
+    } else if (user.role === "SUPER_ADMIN") {
+      setCurrentFleetId("ALL");
+    }
+
     setAgentSessionStart(Date.now());
     setAgentSessions((prev: any) => ({
       ...prev,
@@ -333,6 +440,8 @@ export default function App() {
       const today = new Date();
       
       const collectedRecruits: Record<string, string> = {};
+      const detectedReactivations: any[] = [];
+      const newSnapshot: Record<string, string> = { ...lastCommandSnapshot };
 
       const parsed = lines.slice(1).map((line, i) => {
         const vals = line.split(sep);
@@ -342,6 +451,7 @@ export default function App() {
         const solde = parseFloat((row["Solde"] || "0").replace(",", ".")) || 0;
         const limite = parseFloat((row["Limite"] || "0").replace(",", ".")) || 0;
         const lastOrderStr = row["Date de la dernière commande"] || "";
+        const firstOrderStr = row["Date de la première commande"] || "";
         let jours = null;
         if (lastOrderStr) {
           const d = new Date(lastOrderStr);
@@ -374,7 +484,44 @@ export default function App() {
         }
 
         if (source && source.toUpperCase() !== "YANGO" && tel) {
-          collectedRecruits[tel] = `${dateAjout}|${nom}|${currentFleetId}`;
+          // Gold Detection Cases (Section 3.5.2)
+          let goldStatus = "INSCRIT";
+          if (!firstOrderStr) {
+            // Case 3: No first command
+            goldStatus = "INSCRIT";
+          } else {
+            const dFirst = new Date(firstOrderStr);
+            const dAjout = new Date(dateAjout);
+            if (dFirst >= dAjout) {
+              // Case 1: OK
+              goldStatus = "INSCRIT";
+            } else {
+              // Case 2: Insufficient data (warning)
+              goldStatus = "DONNÉES INSUFF.";
+            }
+          }
+          collectedRecruits[tel] = `${dateAjout}|${nom}|${currentFleetId}|${goldStatus}`;
+        }
+
+        // 45-Day Reactivation Detection (Section 3.6)
+        if (lastOrderStr && tel && source.toUpperCase() !== "YANGO") {
+          const oldLastOrder = lastCommandSnapshot[tel];
+          if (oldLastOrder) {
+            const dOld = new Date(oldLastOrder);
+            const dNew = new Date(lastOrderStr);
+            const gap = Math.floor((dNew.getTime() - dOld.getTime()) / 86400000);
+            if (gap >= 45) {
+              detectedReactivations.push({
+                nom, tel, source,
+                date_reprise: lastOrderStr,
+                date_avant: oldLastOrder,
+                ecart: gap,
+                fleet: currentFleetId,
+                commandes
+              });
+            }
+          }
+          newSnapshot[tel] = lastOrderStr;
         }
 
         return {
@@ -383,6 +530,7 @@ export default function App() {
           tel: row["Numéro de téléphone"] || "",
           solde, limite,
           derniere_commande: lastOrderStr,
+          date_premiere_commande: firstOrderStr,
           jours_inactif: jours,
           commandes,
           zone,
@@ -403,15 +551,22 @@ export default function App() {
       const prev = driversRef.current;
       const prevMap = new Map(prev.map(d => [d.id, d]));
       
+      // KPI: Successfully reactivated (returned to OK zone)
+      let reactivatedToOkCount = 0;
+
       const mergedNew = parsed.map((d: any) => {
         const old: any = prevMap.get(d.id);
         if (old) {
+          // Check if moved from ROUGE/ORANGE to OK
+          if ((old.zone === "ROUGE" || old.zone === "ORANGE") && d.zone === "OK") {
+            reactivatedToOkCount++;
+          }
+
           return {
             ...d,
             _called: old._called,
             _callCount: old._callCount || 0,
             _callLog: old._callLog || [],
-            // Keep old comment if it exists and is not empty, otherwise use new one
             commentaire: (old.commentaire && old.commentaire.trim() !== "") ? old.commentaire : d.commentaire
           };
         }
@@ -432,7 +587,9 @@ export default function App() {
         orange: mergedNew.filter((d: any) => d.zone === "ORANGE").length,
         nouveau: mergedNew.filter((d: any) => d.zone === "NOUVEAU").length,
         ok: mergedNew.filter((d: any) => d.zone === "OK").length,
-        fin_bloque: mergedNew.filter((d: any) => d.fin_bloque).length
+        fin_bloque: mergedNew.filter((d: any) => d.fin_bloque).length,
+        reactivatedToOk: reactivatedToOkCount,
+        reactivated45j: detectedReactivations.length
       };
 
       // Save history
@@ -447,12 +604,21 @@ export default function App() {
       const updatedRecruits = { ...recruits, ...collectedRecruits };
       setRecruits(updatedRecruits);
 
+      // Update reactivations
+      const updatedReactivations = [...detectedReactivations, ...reactivations].slice(0, 100);
+      setReactivations(updatedReactivations);
+
+      // Update snapshot
+      setLastCommandSnapshot(newSnapshot);
+
       // PERSIST EVERYTHING IMMEDIATELY
       (async () => {
         try {
           await window.storage.set("flotte_drivers", JSON.stringify(finalDrivers));
           await window.storage.set("flotte_history", JSON.stringify(newHist));
           await window.storage.set("flotte_recruits", JSON.stringify(updatedRecruits));
+          await window.storage.set("flotte_reactivated", JSON.stringify(updatedReactivations));
+          await window.storage.set("flotte_dl_snapshot", JSON.stringify(newSnapshot));
         } catch (e) {
           console.error("Failed to save after import", e);
           setToasts(prev => [...prev, { id: Date.now(), message: "Erreur de sauvegarde automatique !", type: "error" }]);
@@ -481,7 +647,13 @@ export default function App() {
       )}
 
       {waModal && waDriver && (
-        <WhatsAppModal driver={waDriver} onClose={() => setWaModal(null)} />
+        <WhatsAppModal 
+          driver={waDriver} 
+          onClose={() => setWaModal(null)} 
+          fleetName={fleets.find(f => f.id === waDriver.fleetId)?.name || "Yango"}
+          fleetPhone={fleets.find(f => f.id === waDriver.fleetId)?.phone || ""}
+          agentName={currentAgent}
+        />
       )}
 
       {showSettings && (
@@ -530,13 +702,22 @@ export default function App() {
                     cursor: "pointer",
                     outline: "none",
                     padding: 0,
-                    margin: 0
+                    margin: 0,
+                    maxWidth: 200,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis"
                   }}
                 >
-                  <option value="ALL" style={{ color: "#000" }}>Toutes les flottes</option>
+                  {/* Only show "Toutes" if Super Admin */}
+                  {userRole === "SUPER_ADMIN" && (
+                    <option value="ALL" style={{ color: "#000" }}>🌍 Toutes les flottes (SUPER ADMIN)</option>
+                  )}
                   {availableFleets.map(f => (
-                    <option key={f.id} value={f.id} style={{ color: "#000" }}>{f.name}</option>
+                    <option key={f.id} value={f.id} style={{ color: "#000" }}>🏢 {f.name}</option>
                   ))}
+                  {availableFleets.length === 0 && userRole !== "ADMIN" && (
+                    <option value="" style={{ color: "#000" }}>⛔ Aucun accès</option>
+                  )}
                 </select>
               </div>
             </div>
@@ -578,11 +759,24 @@ export default function App() {
                   <input type="file" accept=".csv" onChange={handleFileUpload} style={{ display: "none" }} />
                 </label>
               )}
-              {userRole === "ADMIN" && (
+              {userRole === "SUPER_ADMIN" && (
                 <button onClick={() => setShowSettings(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(255,255,255,0.12)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 600, border: "1px solid rgba(255,255,255,0.28)", color: "#fff" }}>
                   ⚙️ Paramètres
                 </button>
               )}
+              <button 
+                onClick={() => {
+                  if (window.confirm("Se déconnecter ?")) {
+                    setUserRole(null);
+                    setCurrentAgent("");
+                    setCurrentUserFleets([]);
+                    setAgentSessionStart(null);
+                  }
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(239,68,68,0.2)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 700, border: "1px solid rgba(239,68,68,0.4)", color: "#fff" }}
+              >
+                🚪 Déconnexion
+              </button>
             </div>
           </div>
           <div style={{ display: "flex", gap: 2 }}>
@@ -665,6 +859,7 @@ export default function App() {
                 { label: "Zone Orange", v: stats.orange, c: "#f97316", icon: "⚠️", key: "orange", inverse: true },
                 { label: "Nouveaux", v: stats.nouveau, c: "#8b5cf6", icon: "🎉", key: "nouveau", inverse: false },
                 { label: "Actifs", v: stats.ok, c: "#22c55e", icon: "✅", key: "ok", inverse: false },
+                { label: "Relancés (OK)", v: importHistory[0]?.reactivatedToOk || 0, c: "#059669", icon: "✨", key: "reactivatedToOk", inverse: false },
                 { label: "Bloqués", v: stats.fin_bloque, c: "#dc2626", icon: "⛔", key: "fin_bloque", inverse: true },
                 { label: "Appels passés", v: totalCalls, c: "#1d4ed8", icon: "📞", key: null, inverse: false },
                 { label: "Contactés", v: stats.appeles, c: "#0891b2", icon: "🗣️", key: null, inverse: false },
@@ -931,9 +1126,9 @@ export default function App() {
                 </div>
               ))}
               {currentAgent && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: userRole === "ADMIN" ? "#fef3c7" : "#eff6ff", borderRadius: 10, border: `1px solid ${userRole === "ADMIN" ? "#fcd34d" : "#bfdbfe"}`, fontSize: 13, color: userRole === "ADMIN" ? "#92400e" : "#1d4ed8", fontWeight: 700 }}>
-                  {userRole === "ADMIN" ? "🛡️ Admin" : "👤 Agent"} : {currentAgent}
-                  {userRole === "ADMIN" && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", background: (userRole === "SUPER_ADMIN" || userRole === "ADMIN_PARC") ? "#fef3c7" : "#eff6ff", borderRadius: 10, border: `1px solid ${(userRole === "SUPER_ADMIN" || userRole === "ADMIN_PARC") ? "#fcd34d" : "#bfdbfe"}`, fontSize: 13, color: (userRole === "SUPER_ADMIN" || userRole === "ADMIN_PARC") ? "#92400e" : "#1d4ed8", fontWeight: 700 }}>
+                  {userRole === "SUPER_ADMIN" ? "🛡️ Super Admin" : userRole === "ADMIN_PARC" ? "🏢 Admin Parc" : "👤 Agent"} : {currentAgent}
+                  {(userRole === "SUPER_ADMIN" || userRole === "ADMIN_PARC") && (
                     <button 
                       onClick={() => setActiveTab("agents")}
                       style={{ marginLeft: 8, padding: "4px 8px", background: "#d97706", color: "#fff", border: "none", borderRadius: 6, fontSize: 11, cursor: "pointer", fontWeight: 700 }}
@@ -947,19 +1142,57 @@ export default function App() {
             </div>
 
             <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #e5e7eb", overflow: "hidden" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ background: "#f9fafb", borderBottom: "2px solid #e5e7eb" }}>
-                    {["#", "Chauffeur", "Zone", "Inactif", "Solde", "Commentaire", "Agent", "Appel rapide", "Statut"].map(h => (
-                      <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+              {/* Desktop Table View */}
+              <div className="hidden md:block">
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f9fafb", borderBottom: "2px solid #e5e7eb" }}>
+                      {["#", "Chauffeur", "Zone", "Inactif", "Solde", "Commentaire", "Agent", "Appel rapide", "Statut"].map(h => (
+                        <th key={h} style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map(driver => (
+                      <DriverRow 
+                        key={driver.id} 
+                        driver={driver} 
+                        onComment={onComment} 
+                        onCallClick={handleCallClick} 
+                        onWaClick={handleWaClick} 
+                        currentAgent={currentAgent}
+                        fleets={fleets}
+                      />
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginated.map(driver => <DriverRow key={driver.id} driver={driver} onComment={onComment} onCallClick={handleCallClick} onWaClick={handleWaClick} />)}
-                  {paginated.length === 0 && <tr><td colSpan={9} style={{ padding: 40, textAlign: "center", color: "#9ca3af" }}>Aucun chauffeur trouvé</td></tr>}
-                </tbody>
-              </table>
+                    {paginated.length === 0 && <tr><td colSpan={9} style={{ padding: 40, textAlign: "center", color: "#9ca3af" }}>Aucun chauffeur trouvé</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile List View */}
+              <div className="block md:hidden">
+                {paginated.map(driver => (
+                  <div key={driver.id} style={{ borderBottom: "1px solid #f3f4f6", padding: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 16 }}>{driver.nom}</div>
+                        <div style={{ fontSize: 13, color: "#6b7280" }}>{driver.tel}</div>
+                      </div>
+                      <ZoneBadge zone={driver.zone} />
+                    </div>
+                    <div style={{ display: "flex", gap: 12, marginBottom: 12, fontSize: 13 }}>
+                      <div style={{ color: "#6b7280" }}>⏳ {driver.jours_inactif}j inactif</div>
+                      <div style={{ color: driver.solde < 0 ? "#dc2626" : "#15803d", fontWeight: 700 }}>💰 {driver.solde} FCFA</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <a href={`tel:${driver.tel}`} onClick={() => handleCallClick(driver.id)} style={{ flex: 1, textAlign: "center", padding: "10px", background: "#1d4ed8", color: "#fff", borderRadius: 8, textDecoration: "none", fontWeight: 700, fontSize: 14 }}>📞 Appeler</a>
+                      <a href={`sms:${driver.tel}?body=${encodeURIComponent(`Bonjour ${driver.nom}, c'est ${currentAgent || "votre agent"} de la flotte. Comment allez-vous ?`)}`} onClick={() => handleWaClick(driver.id)} style={{ flex: 1, textAlign: "center", padding: "10px", background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", borderRadius: 8, textDecoration: "none", fontWeight: 700, fontSize: 14 }}>✉️ SMS</a>
+                      <button onClick={() => handleWaClick(driver.id)} style={{ flex: 1, padding: "10px", background: "#25d366", color: "#fff", borderRadius: 8, border: "none", fontWeight: 700, fontSize: 14 }}>💬 WA</button>
+                    </div>
+                  </div>
+                ))}
+                {paginated.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "#9ca3af" }}>Aucun chauffeur trouvé</div>}
+              </div>
             </div>
 
             {totalPages > 1 && (
@@ -1006,11 +1239,15 @@ export default function App() {
 🎉 Nouveaux (0 course) : ${stats.nouveau} → ${stats.nouveauApp} appelés
 ✅ Actifs : ${stats.ok}
 
+🔄 RÉACTIVATIONS :
+✨ Relancés succès (OK) : ${importHistory[0]?.reactivatedToOk || 0}
+⚡ Réactivés 45j+ : ${importHistory[0]?.reactivated45j || 0}
+
 ──────────────────────────────
 Cellule de Relance Yango`}
               </div>
               <RippleBtn onClick={() => {
-                const t = `📅 RAPPORT FLOTTE — ${new Date().toLocaleDateString("fr-FR")}\n\n📞 Appels: ${totalCalls}\n🗣️ Contactés: ${stats.appeles}\n⛔ Bloqués: ${stats.fin_bloque}\n\n🚨 Rouge: ${stats.rouge} (${stats.rougeApp} appelés)\n⚠️ Orange: ${stats.orange} (${stats.orangeApp} appelés)\n🎉 Nouveaux: ${stats.nouveau} (${stats.nouveauApp} appelés)\n✅ Actifs: ${stats.ok}`;
+                const t = `📅 RAPPORT FLOTTE — ${new Date().toLocaleDateString("fr-FR")}\n\n📞 Appels: ${totalCalls}\n🗣️ Contactés: ${stats.appeles}\n⛔ Bloqués: ${stats.fin_bloque}\n\n🚨 Rouge: ${stats.rouge} (${stats.rougeApp} appelés)\n⚠️ Orange: ${stats.orange} (${stats.orangeApp} appelés)\n🎉 Nouveaux: ${stats.nouveau} (${stats.nouveauApp} appelés)\n✅ Actifs: ${stats.ok}\n\n🔄 Réactivés (OK): ${importHistory[0]?.reactivatedToOk || 0}\n⚡ Réactivés 45j+: ${importHistory[0]?.reactivated45j || 0}`;
                 navigator.clipboard?.writeText(t);
               }} style={{ marginTop: 12, padding: "10px 20px", background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: 14 }}>
                 📋 Copier le rapport
@@ -1022,12 +1259,81 @@ Cellule de Relance Yango`}
         {/* AGENTS */}
         {activeTab === "agents" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            {/* ACCESS MANAGEMENT - ADMIN ONLY */}
-            {userRole === "ADMIN" && (
+            {/* FLEET MANAGEMENT - SUPER ADMIN ONLY */}
+            {userRole === "SUPER_ADMIN" && (
+              <div style={{ background: "#fff", borderRadius: 12, border: "2px solid #1d4ed8", padding: 20 }}>
+                <div style={{ fontWeight: 800, fontSize: 18, color: "#1e3a8a", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                  🏢 Gestion des Parcs (SUPER ADMIN)
+                </div>
+                
+                <div style={{ display: "flex", gap: 12, marginBottom: 20, background: "#eff6ff", padding: 16, borderRadius: 10 }}>
+                  <input 
+                    type="text" 
+                    placeholder="ID du parc (ex: diagne)" 
+                    id="new-fleet-id"
+                    style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid #bfdbfe" }}
+                  />
+                  <input 
+                    type="text" 
+                    placeholder="Nom du parc" 
+                    id="new-fleet-name"
+                    style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid #bfdbfe" }}
+                  />
+                  <input 
+                    type="text" 
+                    placeholder="Téléphone" 
+                    id="new-fleet-phone"
+                    style={{ flex: 1, padding: "10px 14px", borderRadius: 8, border: "1px solid #bfdbfe" }}
+                  />
+                  <button 
+                    onClick={() => {
+                      const id = (document.getElementById("new-fleet-id") as HTMLInputElement).value;
+                      const name = (document.getElementById("new-fleet-name") as HTMLInputElement).value;
+                      const phone = (document.getElementById("new-fleet-phone") as HTMLInputElement).value;
+                      if (id && name) {
+                        const newFleets = [...fleets, { id, name, phone }];
+                        setFleets(newFleets);
+                        (document.getElementById("new-fleet-id") as HTMLInputElement).value = "";
+                        (document.getElementById("new-fleet-name") as HTMLInputElement).value = "";
+                        (document.getElementById("new-fleet-phone") as HTMLInputElement).value = "";
+                        alert(`Parc ${name} ajouté !`);
+                      }
+                    }}
+                    style={{ padding: "10px 20px", background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Ajouter
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12 }}>
+                  {fleets.map(f => (
+                    <div key={f.id} style={{ padding: 14, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{f.name}</div>
+                        <div style={{ fontSize: 11, color: "#64748b" }}>ID: {f.id} · {f.phone}</div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          if (window.confirm(`Supprimer le parc ${f.name} ?`)) {
+                            setFleets(fleets.filter(fl => fl.id !== f.id));
+                          }
+                        }}
+                        style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 16 }}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ACCESS MANAGEMENT - SUPER ADMIN OR ADMIN PARC */}
+            {(userRole === "SUPER_ADMIN" || userRole === "ADMIN_PARC") && (
               <div style={{ background: "#fff", borderRadius: 12, border: "2px solid #fcd34d", padding: 20 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                   <div style={{ fontWeight: 800, fontSize: 18, color: "#92400e", display: "flex", alignItems: "center", gap: 8 }}>
-                    🔑 Gestion des Accès <span style={{ fontSize: 11, background: "#fef3c7", color: "#b45309", padding: "2px 8px", borderRadius: 99 }}>ADMIN</span>
+                    🔑 Gestion des Accès <span style={{ fontSize: 11, background: "#fef3c7", color: "#b45309", padding: "2px 8px", borderRadius: 99 }}>{userRole === "SUPER_ADMIN" ? "SUPER ADMIN" : "ADMIN PARC"}</span>
                   </div>
                 </div>
                 
@@ -1061,7 +1367,8 @@ Cellule de Relance Yango`}
                         style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
                       >
                         <option value="AGENT">👤 Agent</option>
-                        <option value="ADMIN">🛡️ Admin</option>
+                        {userRole === "SUPER_ADMIN" && <option value="ADMIN_PARC">🏢 Admin Parc</option>}
+                        {userRole === "SUPER_ADMIN" && <option value="SUPER_ADMIN">🛡️ Super Admin</option>}
                       </select>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1080,7 +1387,7 @@ Cellule de Relance Yango`}
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Accès aux Flottes (Cocher pour autoriser)</label>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 12, background: "#fff", padding: 12, borderRadius: 8, border: "1px solid #fcd34d" }}>
-                      {fleets.map(f => (
+                      {availableFleets.map(f => (
                         <label key={f.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
                           <input 
                             type="checkbox" 
@@ -1142,12 +1449,22 @@ Cellule de Relance Yango`}
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-                  {users.map((u, i) => (
+                  {users
+                    .filter(u => {
+                      if (userRole === "SUPER_ADMIN") return true;
+                      // ADMIN PARC can only see users who have at least one fleet in common with them
+                      if (userRole === "ADMIN_PARC") {
+                        const uFleets = u.allowedFleets || [];
+                        return uFleets.some(fid => currentUserFleets.includes(fid));
+                      }
+                      return false;
+                    })
+                    .map((u, i) => (
                     <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8, padding: "14px", background: editingIndex === i ? "#eff6ff" : "#fff", border: `1px solid ${editingIndex === i ? "#3b82f6" : "#e5e7eb"}`, borderRadius: 8 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                         <div>
-                          <div style={{ fontWeight: 700, fontSize: 15, color: u.role === "ADMIN" ? "#b45309" : "#1e3a5f" }}>
-                            {u.role === "ADMIN" ? "🛡️" : "👤"} {u.name}
+                          <div style={{ fontWeight: 700, fontSize: 15, color: (u.role === "SUPER_ADMIN" || u.role === "ADMIN_PARC") ? "#b45309" : "#1e3a5f" }}>
+                            {u.role === "SUPER_ADMIN" ? "🛡️" : u.role === "ADMIN_PARC" ? "🏢" : "👤"} {u.name}
                           </div>
                           {u.customRole && <div style={{ fontSize: 12, color: "#4b5563", fontStyle: "italic" }}>{u.customRole}</div>}
                           <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace", marginTop: 2 }}>Code: {u.code}</div>
@@ -1188,10 +1505,13 @@ Cellule de Relance Yango`}
                       {/* Allowed Fleets Display */}
                       <div style={{ fontSize: 11, color: "#64748b", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
                         <span style={{ fontWeight: 600 }}>Accès : </span>
-                        {(!u.allowedFleets || u.allowedFleets.length === 0) 
-                          ? <span style={{ color: "#16a34a" }}>Toutes les flottes</span>
-                          : u.allowedFleets.map((fid: string) => fleets.find(f => f.id === fid)?.name || fid).join(", ")
-                        }
+                        {u.role === "SUPER_ADMIN" ? (
+                          <span style={{ color: "#b45309", fontWeight: 700 }}>Accès Total (Super Admin)</span>
+                        ) : (!u.allowedFleets || u.allowedFleets.length === 0) ? (
+                          <span style={{ color: "#ef4444", fontWeight: 700 }}>⛔ Aucun accès configuré</span>
+                        ) : (
+                          u.allowedFleets.map((fid: string) => fleets.find(f => f.id === fid)?.name || fid).join(", ")
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1308,7 +1628,7 @@ Cellule de Relance Yango`}
             drivers={fleetDrivers} 
             recruits={recruits} 
             currentFleetId={currentFleetId}
-            onAddRecruit={(phone, date, name) => setRecruits(prev => ({ ...prev, [phone]: `${date}|${name || ""}|${currentFleetId !== "ALL" ? currentFleetId : ""}` }))}
+            onAddRecruit={(phone, date, name) => setRecruits(prev => ({ ...prev, [phone]: `${date}|${name || ""}|${currentFleetId !== "ALL" ? currentFleetId : ""}|INSCRIT` }))}
             onRemoveRecruit={(phone) => setRecruits(prev => {
               const next = { ...prev };
               delete next[phone];
@@ -1322,10 +1642,14 @@ Cellule de Relance Yango`}
           <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 960 }}>
             {/* Storage badge */}
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", background: storageReady ? "#f0fdf4" : "#fff7ed", border: `1px solid ${storageReady ? "#86efac" : "#fed7aa"}`, borderRadius: 12 }}>
-              <span style={{ fontSize: 24 }}>{storageReady ? "💾" : "⏳"}</span>
+              <span style={{ fontSize: 24 }}>{firebaseActive ? "🔥" : storageReady ? "💾" : "⏳"}</span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, color: storageReady ? "#15803d" : "#92400e" }}>{storageReady ? "Sauvegarde automatique active — données persistantes" : "Chargement de la mémoire..."}</div>
-                <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>Appels, commentaires et historiques sauvegardés automatiquement. Disponibles à la prochaine ouverture.</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: firebaseActive ? "#ea580c" : storageReady ? "#15803d" : "#92400e" }}>
+                  {firebaseActive ? "Connecté à Firebase Cloud" : storageReady ? "Sauvegarde automatique active — données persistantes" : "Chargement de la mémoire..."}
+                </div>
+                <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+                  {firebaseActive ? "Vos données sont synchronisées en temps réel sur le cloud Google Firebase." : "Appels, commentaires et historiques sauvegardés automatiquement. Disponibles à la prochaine ouverture."}
+                </div>
               </div>
               <button onClick={async () => {
                 if (!window.confirm("Effacer TOUTES les données sauvegardées ? Appels et historiques seront perdus.")) return;
@@ -1350,6 +1674,7 @@ Cellule de Relance Yango`}
                   { label: "Contactés", v: drivers.filter(d => d._called).length, c: "#22c55e", icon: "🗣️" },
                   { label: "Commentaires", v: drivers.filter(d => d.commentaire && d.commentaire.startsWith("[")).length, c: "#8b5cf6", icon: "📝" },
                   { label: "Bloqués", v: drivers.filter(d => d.fin_bloque).length, c: "#dc2626", icon: "⛔" },
+                  { label: "Réactivés 45j", v: reactivations.length, c: "#ea580c", icon: "⚡" },
                   { label: "Importations", v: importHistory.length, c: "#0891b2", icon: "📂" },
                 ].map(({ label, v, c, icon }) => (
                   <div key={label} style={{ background: "#f9fafb", borderRadius: 10, padding: "12px 14px", border: "1px solid #e5e7eb", textAlign: "center" }}>
@@ -1393,6 +1718,40 @@ Cellule de Relance Yango`}
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Reactivations History */}
+            {reactivations.length > 0 && (
+              <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", marginBottom: 20 }}>
+                <div style={{ padding: "14px 18px", background: "#fff7ed", borderBottom: "1px solid #fed7aa", fontWeight: 700, fontSize: 15, color: "#9a3412", display: "flex", alignItems: "center", gap: 8 }}>
+                  ⚡ Historique des Réactivations (45j+)
+                </div>
+                <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: "#fffaf5", borderBottom: "1px solid #fed7aa", textAlign: "left" }}>
+                        <th style={{ padding: "10px 18px", color: "#9a3412" }}>Chauffeur</th>
+                        <th style={{ padding: "10px 18px", color: "#9a3412" }}>Source</th>
+                        <th style={{ padding: "10px 18px", color: "#9a3412" }}>Écart</th>
+                        <th style={{ padding: "10px 18px", color: "#9a3412" }}>Date Reprise</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reactivations.map((r, i) => (
+                        <tr key={i} style={{ borderBottom: "1px solid #fef3c7" }}>
+                          <td style={{ padding: "10px 18px" }}>
+                            <div style={{ fontWeight: 700 }}>{r.nom}</div>
+                            <div style={{ fontSize: 11, color: "#64748b" }}>{r.tel}</div>
+                          </td>
+                          <td style={{ padding: "10px 18px" }}>{r.source}</td>
+                          <td style={{ padding: "10px 18px", fontWeight: 700, color: "#ea580c" }}>{r.ecart} jours</td>
+                          <td style={{ padding: "10px 18px" }}>{new Date(r.date_reprise).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
