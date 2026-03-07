@@ -5,15 +5,33 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database('flotte.db');
+
+let db: any;
+try {
+  db = new Database('flotte.db');
+} catch (e) {
+  console.error("Failed to open flotte.db, falling back to in-memory database", e);
+  db = new Database(':memory:');
+}
 
 // Initialize DB
-db.exec(`
-  CREATE TABLE IF NOT EXISTS kv_store (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
-`);
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kv_store (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
+} catch (e) {
+  console.error("Failed to initialize database, using in-memory fallback", e);
+  db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kv_store (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+  `);
+}
 
 async function startServer() {
   const app = express();

@@ -734,7 +734,18 @@ export default function App() {
                     <div style={{ fontSize: 11, opacity: 0.65, lineHeight: 1 }}>Agent actif</div>
                     <div style={{ fontWeight: 800, fontSize: 14 }}>{currentAgent}</div>
                   </div>
-                  <button onClick={() => setCurrentAgent("")} style={{ marginLeft: 4, background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 14 }}>✕</button>
+                  <button 
+                    onClick={() => {
+                      setCurrentAgent("");
+                      setUserRole(null);
+                      setCurrentUserFleets([]);
+                      setAgentSessionStart(null);
+                    }} 
+                    style={{ marginLeft: 4, background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 14, padding: 4 }}
+                    title="Se déconnecter"
+                  >
+                    ✕
+                  </button>
                 </div>
               )}
               {/* Live call counter */}
@@ -766,14 +777,25 @@ export default function App() {
               )}
               <button 
                 onClick={() => {
-                  if (window.confirm("Se déconnecter ?")) {
-                    setUserRole(null);
-                    setCurrentAgent("");
-                    setCurrentUserFleets([]);
-                    setAgentSessionStart(null);
-                  }
+                  setUserRole(null);
+                  setCurrentAgent("");
+                  setCurrentUserFleets([]);
+                  setAgentSessionStart(null);
                 }}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", background: "rgba(239,68,68,0.2)", borderRadius: 10, cursor: "pointer", fontSize: 13, fontWeight: 700, border: "1px solid rgba(239,68,68,0.4)", color: "#fff" }}
+                style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: 6, 
+                  padding: "10px 16px", 
+                  background: "#ef4444", 
+                  borderRadius: 10, 
+                  cursor: "pointer", 
+                  fontSize: 13, 
+                  fontWeight: 800, 
+                  border: "none", 
+                  color: "#fff",
+                  boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+                }}
               >
                 🚪 Déconnexion
               </button>
