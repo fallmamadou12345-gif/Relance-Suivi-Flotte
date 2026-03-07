@@ -53,6 +53,7 @@ export default function App() {
   const [toasts, setToasts] = useState<any[]>([]);
   const [totalCalls, setTotalCalls] = useState(0);
   const [storageMode, setStorageMode] = useState<"cloud" | "local" | "unknown">("unknown");
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [recruits, setRecruits] = useState<Record<string, string>>({});
   const [reactivations, setReactivations] = useState<any[]>([]);
@@ -130,6 +131,7 @@ export default function App() {
       if (finalUsers.length > 0) {
         setUsers(finalUsers);
       }
+      setLoadingUsers(false);
 
       // Load other data
       try {
@@ -632,7 +634,7 @@ export default function App() {
   const waDriver = waModal ? driversRef.current.find(d => d.id === waModal.driverId) : null;
 
   if (!currentAgent) {
-    return <LoginModal users={users} onLogin={handleLogin} />;
+    return <LoginModal users={users} onLogin={handleLogin} loading={loadingUsers} />;
   }
 
   return (
@@ -1443,22 +1445,23 @@ Cellule de Relance Yango`}
                     <button 
                       onClick={() => {
                         if (newUser.name && newUser.code) {
+                          const cleanNewUser = { ...newUser, name: newUser.name.trim().toUpperCase() };
                           let newUsers;
                           if (editingIndex !== null) {
                             // Update existing
                             newUsers = [...users];
-                            newUsers[editingIndex] = { ...newUser };
+                            newUsers[editingIndex] = cleanNewUser;
                             setEditingIndex(null);
                           } else {
                             // Add new
-                            newUsers = [...users, { ...newUser }];
+                            newUsers = [...users, cleanNewUser];
                           }
                           setUsers(newUsers);
                           // Force immediate save
                           window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(console.error);
                           
                           setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
-                          alert(editingIndex !== null ? "Utilisateur modifié !" : `Utilisateur ${newUser.name} ajouté !`);
+                          alert(editingIndex !== null ? "Utilisateur modifié !" : `Utilisateur ${cleanNewUser.name} ajouté !`);
                         } else {
                           alert("Nom et Code requis !");
                         }

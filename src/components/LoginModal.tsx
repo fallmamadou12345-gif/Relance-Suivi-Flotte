@@ -4,27 +4,43 @@ import { motion } from "motion/react";
 interface LoginModalProps {
   users: any[];
   onLogin: (user: any) => void;
+  loading?: boolean;
 }
 
-export default function LoginModal({ users, onLogin }: LoginModalProps) {
+export default function LoginModal({ users, onLogin, loading }: LoginModalProps) {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     
-    const cleanName = name.trim().toUpperCase();
-    const cleanPass = password.trim();
-
-    const user = users.find(u => u.name === cleanName && u.code === cleanPass);
-
-    if (user) {
-      onLogin(user);
-    } else {
-      setError("Nom ou code d'accès incorrect.");
+    if (!name.trim() || !password.trim()) {
+      setError("Veuillez remplir tous les champs.");
+      return;
     }
+
+    setIsLoggingIn(true);
+
+    // Small timeout to simulate "fluid" check and ensure state is stable
+    setTimeout(() => {
+      const cleanName = name.trim().toUpperCase();
+      const cleanPass = password.trim();
+
+      const user = users.find(u => 
+        u.name.trim().toUpperCase() === cleanName && 
+        u.code.trim() === cleanPass
+      );
+
+      if (user) {
+        onLogin(user);
+      } else {
+        setError("Nom ou code d'accès incorrect.");
+        setIsLoggingIn(false);
+      }
+    }, 300);
   };
 
   return (
@@ -44,9 +60,21 @@ export default function LoginModal({ users, onLogin }: LoginModalProps) {
       >
         <div style={{ fontSize: 48, marginBottom: 16 }}>🛡️</div>
         <h2 style={{ fontSize: 24, fontWeight: 800, color: "#1e3a5f", marginBottom: 8 }}>Accès Sécurisé</h2>
-        <p style={{ color: "#64748b", marginBottom: 24 }}>Identifiez-vous pour accéder à la plateforme.</p>
+        <p style={{ color: "#64748b", marginBottom: 24 }}>
+          {loading ? "Chargement des accès..." : "Identifiez-vous pour accéder à la plateforme."}
+        </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {loading ? (
+          <div style={{ padding: "40px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+            <div style={{ 
+              width: 40, height: 40, border: "4px solid #e2e8f0", 
+              borderTopColor: "#1d4ed8", borderRadius: "50%",
+              animation: "spin 1s linear infinite"
+            }}></div>
+            <div style={{ color: "#64748b", fontSize: 14, fontWeight: 600 }}>Récupération des comptes...</div>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <input
             autoFocus
             type="text"
@@ -75,20 +103,37 @@ export default function LoginModal({ users, onLogin }: LoginModalProps) {
 
           <button
             type="submit"
+            disabled={isLoggingIn}
             style={{
               width: "100%", padding: "14px", borderRadius: 12,
-              background: "#1d4ed8",
+              background: isLoggingIn ? "#94a3b8" : "#1d4ed8",
               color: "#fff", fontWeight: 700, fontSize: 16, border: "none",
-              cursor: "pointer", marginTop: 8,
-              transition: "background 0.2s"
+              cursor: isLoggingIn ? "not-allowed" : "pointer", marginTop: 8,
+              transition: "all 0.2s",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8
             }}
           >
-            Connexion →
+            {isLoggingIn ? (
+              <>
+                <span style={{ 
+                  width: 16, height: 16, border: "2px solid #fff", 
+                  borderTopColor: "transparent", borderRadius: "50%",
+                  animation: "spin 0.8s linear infinite"
+                }}></span>
+                Vérification...
+              </>
+            ) : "Connexion →"}
           </button>
         </form>
+        )}
         <div style={{ marginTop: 20, fontSize: 11, color: "#94a3b8" }}>
           Demandez votre code d'accès à l'administrateur.
         </div>
+        <style>{`
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
       </motion.div>
     </div>
   );
