@@ -77,30 +77,43 @@ export default function App() {
   // LOAD from storage on mount
   useEffect(() => {
     (async () => {
+      setLoadingUsers(true);
       // 1. Load from Firebase
       let finalUsers: any[] = [];
-      const isFirebaseConfigured = true;
+      const isFirebaseConfigured = !!import.meta.env.VITE_FIREBASE_API_KEY;
+      
       if (isFirebaseConfigured) {
         try {
-          const driversSnap = await getDocs(collection(db, "drivers"));
+          // Parallelize loading to be much faster (2-5 seconds target)
+          const [driversSnap, usersSnap, logsSnap] = await Promise.all([
+            getDocs(collection(db, "drivers")),
+            getDocs(collection(db, "users")),
+            getDocs(query(collection(db, "logs"), orderBy("time", "desc"), limit(100)))
+          ]);
+
           if (!driversSnap.empty) {
             const fbDrivers = driversSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setDrivers(fbDrivers);
             setFirebaseActive(true);
+            setStorageMode("cloud");
+          } else {
+            // Firebase is configured but empty, check local
+            setStorageMode("local");
           }
           
-          const usersSnap = await getDocs(collection(db, "users"));
           if (!usersSnap.empty) {
             finalUsers = usersSnap.docs.map(doc => doc.data());
           }
 
-          const logsSnap = await getDocs(query(collection(db, "logs"), orderBy("time", "desc"), limit(100)));
           if (!logsSnap.empty) {
             setGlobalLogs(logsSnap.docs.map(doc => doc.data()));
           }
         } catch (e) {
           console.error("Firebase load error:", e);
+          setStorageMode("local");
         }
+      } else {
+        setStorageMode("local");
       }
 
       // 2. Load from Local Storage if Firebase was empty or failed
@@ -630,6 +643,35 @@ export default function App() {
     reader.readAsText(file, "utf-8");
   };
 
+  const handleSyncToCloud = async () => {
+    if (!firebaseActive) {
+      alert("Firebase n'est pas configuré ou inaccessible.");
+      return;
+    }
+    if (!confirm("Voulez-vous envoyer toutes vos données locales vers le Cloud ? Cela écrasera les données distantes.")) return;
+    
+    try {
+      setToasts(prev => [...prev, { id: Date.now(), message: "Synchronisation Cloud en cours...", type: "info" }]);
+      
+      // Sync drivers
+      for (const d of drivers) {
+        await setDoc(doc(db, "drivers", d.id), d);
+      }
+      // Sync users
+      for (const u of users) {
+        // Use name as ID for users if no ID
+        const userId = u.id || u.name.replace(/\s/g, "_");
+        await setDoc(doc(db, "users", userId), u);
+      }
+      
+      setStorageMode("cloud");
+      setToasts(prev => [...prev, { id: Date.now(), message: "Données synchronisées avec succès !", type: "success" }]);
+    } catch (e) {
+      console.error("Sync error", e);
+      alert("Erreur lors de la synchronisation.");
+    }
+  };
+
   const modalDriver = modal ? driversRef.current.find(d => d.id === modal.driverId) : null;
   const waDriver = waModal ? driversRef.current.find(d => d.id === waModal.driverId) : null;
 
@@ -663,6 +705,8 @@ export default function App() {
           onClose={() => setShowSettings(false)} 
           fleets={fleets}
           setFleets={setFleets}
+          storageMode={storageMode}
+          onSyncToCloud={handleSyncToCloud}
         />
       )}
       <Toast events={toasts} />
