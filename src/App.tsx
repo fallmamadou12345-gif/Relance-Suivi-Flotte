@@ -76,64 +76,78 @@ export default function App() {
 
   // LOAD from storage on mount
   useEffect(() => {
+    let unsubDrivers: any;
+    let unsubUsers: any;
+    let unsubLogs: any;
+
     (async () => {
-      // 1. Load from Firebase
-      let finalUsers: any[] = [];
-      const isFirebaseConfigured = true;
+      setLoadingUsers(true);
+      
+      // 1. Load Session if exists
+      try {
+        const savedSession = await window.storage.get("flotte_session_data");
+        if (savedSession && savedSession.value) {
+          const session = JSON.parse(savedSession.value);
+          setCurrentAgent(session.name);
+          setUserRole(session.role);
+          setCurrentUserFleets(session.allowedFleets || []);
+          setCurrentUserCustomRole(session.customRole || "");
+          setAgentSessionStart(session.sessionStart || Date.now());
+          
+          if (session.role === "SUPER_ADMIN") {
+            setCurrentFleetId("ALL");
+          } else if (session.allowedFleets && session.allowedFleets.length > 0) {
+            setCurrentFleetId(session.allowedFleets[0]);
+          }
+        }
+      } catch (e) { console.error("Session load error", e); }
+
+      // 2. Load from Firebase with Real-time listeners
+      const isFirebaseConfigured = !!import.meta.env.VITE_FIREBASE_API_KEY;
+      
       if (isFirebaseConfigured) {
         try {
-          const driversSnap = await getDocs(collection(db, "drivers"));
-          if (!driversSnap.empty) {
-            const fbDrivers = driversSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setDrivers(fbDrivers);
-            setFirebaseActive(true);
-          }
-          
-          const usersSnap = await getDocs(collection(db, "users"));
-          if (!usersSnap.empty) {
-            finalUsers = usersSnap.docs.map(doc => doc.data());
-          }
+          unsubDrivers = onSnapshot(collection(db, "drivers"), (snap) => {
+            if (!snap.empty) {
+              const fbDrivers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setDrivers(fbDrivers);
+              setFirebaseActive(true);
+              setStorageMode("cloud");
+            } else {
+              setStorageMode("local");
+            }
+          }, (err) => {
+            console.error("Drivers listener error", err);
+            setStorageMode("local");
+          });
 
-          const logsSnap = await getDocs(query(collection(db, "logs"), orderBy("time", "desc"), limit(100)));
-          if (!logsSnap.empty) {
-            setGlobalLogs(logsSnap.docs.map(doc => doc.data()));
-          }
+          unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
+            if (!snap.empty) {
+              const fbUsers = snap.docs.map(doc => doc.data());
+              setUsers(fbUsers);
+              setLoadingUsers(false);
+            } else {
+              setLoadingUsers(false);
+            }
+          });
+
+          unsubLogs = onSnapshot(query(collection(db, "logs"), orderBy("time", "desc"), limit(100)), (snap) => {
+            if (!snap.empty) {
+              setGlobalLogs(snap.docs.map(doc => doc.data()));
+            }
+          });
+
         } catch (e) {
-          console.error("Firebase load error:", e);
+          console.error("Firebase setup error:", e);
+          setStorageMode("local");
+          setLoadingUsers(false);
         }
+      } else {
+        setStorageMode("local");
+        setLoadingUsers(false);
       }
 
-      // 2. Load from Local Storage if Firebase was empty or failed
-      if (finalUsers.length === 0) {
-        try {
-          const u = await window.storage.get("flotte_users");
-          if (u && u.value) {
-            finalUsers = JSON.parse(u.value);
-          }
-        } catch (e) { }
-      }
-
-      // 3. Ensure SUPER ADMIN exists in the final list
-      const hasSuperAdmin = finalUsers.some((u: any) => u.role === "SUPER_ADMIN" || u.name === "SUPER ADMIN");
-      if (!hasSuperAdmin) {
-        // Upgrade old ADMIN or add new SUPER ADMIN
-        const adminIdx = finalUsers.findIndex((u: any) => u.role === "ADMIN");
-        if (adminIdx !== -1) {
-          finalUsers[adminIdx].role = "SUPER_ADMIN";
-          finalUsers[adminIdx].name = "SUPER ADMIN";
-        } else {
-          finalUsers.push({ name: "SUPER ADMIN", code: "admin", role: "SUPER_ADMIN", allowedFleets: [], customRole: "Directeur Général" });
-        }
-        // Save back to ensure it persists
-        window.storage.set("flotte_users", JSON.stringify(finalUsers)).catch(() => {});
-      }
-      
-      if (finalUsers.length > 0) {
-        setUsers(finalUsers);
-      }
-      setLoadingUsers(false);
-
-      // Load other data
+      // 3. Load other static data
       try {
         const savedFleets = await window.storage.get("flotte_fleets");
         if (savedFleets && savedFleets.value) {
@@ -147,30 +161,8 @@ export default function App() {
       } catch (e) { }
 
       try {
-        const saved = await window.storage.get("flotte_drivers");
-        if (saved && saved.value) {
-          const data = JSON.parse(saved.value);
-          if (data && data.length > 0) setDrivers(data);
-        }
-      } catch (e) { }
-
-      try {
-        const ag = await window.storage.get("flotte_agent");
-        if (ag && ag.value) {
-          // Don't auto-login, force re-login for session tracking, but maybe remember last
-          // Actually, let's clear currentAgent on refresh to force login and session start
-          // setCurrentAgent(ag.value); 
-        }
-      } catch (e) { }
-
-      try {
         const sess = await window.storage.get("flotte_sessions");
         if (sess && sess.value) setAgentSessions(JSON.parse(sess.value));
-      } catch (e) { }
-
-      try {
-        const logs = await window.storage.get("flotte_logs");
-        if (logs && logs.value) setGlobalLogs(JSON.parse(logs.value));
       } catch (e) { }
 
       try {
@@ -194,8 +186,14 @@ export default function App() {
       } catch (e) { }
 
       setStorageReady(true);
-      setStorageMode(window.storage.mode);
+      if (!isFirebaseConfigured) setStorageMode(window.storage.mode);
     })();
+
+    return () => {
+      if (unsubDrivers) unsubDrivers();
+      if (unsubUsers) unsubUsers();
+      if (unsubLogs) unsubLogs();
+    };
   }, []);
 
   // SAVE to Firebase
@@ -365,7 +363,18 @@ export default function App() {
       setCurrentFleetId("ALL");
     }
 
-    setAgentSessionStart(Date.now());
+    const sessionStart = Date.now();
+    setAgentSessionStart(sessionStart);
+
+    // Persist session
+    window.storage.set("flotte_session_data", JSON.stringify({
+      name: user.name,
+      role: user.role,
+      allowedFleets: allowed,
+      customRole: user.customRole || "",
+      sessionStart
+    })).catch(() => {});
+
     setAgentSessions((prev: any) => ({
       ...prev,
       [user.name]: {
@@ -630,6 +639,35 @@ export default function App() {
     reader.readAsText(file, "utf-8");
   };
 
+  const handleSyncToCloud = async () => {
+    if (!firebaseActive) {
+      alert("Firebase n'est pas configuré ou inaccessible.");
+      return;
+    }
+    if (!confirm("Voulez-vous envoyer toutes vos données locales vers le Cloud ? Cela écrasera les données distantes.")) return;
+    
+    try {
+      setToasts(prev => [...prev, { id: Date.now(), message: "Synchronisation Cloud en cours...", type: "info" }]);
+      
+      // Sync drivers
+      for (const d of drivers) {
+        await setDoc(doc(db, "drivers", d.id), d);
+      }
+      // Sync users
+      for (const u of users) {
+        // Use name as ID for users if no ID
+        const userId = u.id || u.name.replace(/\s/g, "_");
+        await setDoc(doc(db, "users", userId), u);
+      }
+      
+      setStorageMode("cloud");
+      setToasts(prev => [...prev, { id: Date.now(), message: "Données synchronisées avec succès !", type: "success" }]);
+    } catch (e) {
+      console.error("Sync error", e);
+      alert("Erreur lors de la synchronisation.");
+    }
+  };
+
   const modalDriver = modal ? driversRef.current.find(d => d.id === modal.driverId) : null;
   const waDriver = waModal ? driversRef.current.find(d => d.id === waModal.driverId) : null;
 
@@ -663,6 +701,8 @@ export default function App() {
           onClose={() => setShowSettings(false)} 
           fleets={fleets}
           setFleets={setFleets}
+          storageMode={storageMode}
+          onSyncToCloud={handleSyncToCloud}
         />
       )}
       <Toast events={toasts} />
@@ -742,6 +782,7 @@ export default function App() {
                       setUserRole(null);
                       setCurrentUserFleets([]);
                       setAgentSessionStart(null);
+                      window.storage.delete("flotte_session_data").catch(() => {});
                     }} 
                     style={{ marginLeft: 4, background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 14, padding: 4 }}
                     title="Se déconnecter"
@@ -783,6 +824,7 @@ export default function App() {
                   setCurrentAgent("");
                   setCurrentUserFleets([]);
                   setAgentSessionStart(null);
+                  window.storage.delete("flotte_session_data").catch(() => {});
                 }}
                 style={{ 
                   display: "flex", 

@@ -24,23 +24,20 @@ export default function LoginModal({ users, onLogin, loading }: LoginModalProps)
 
     setIsLoggingIn(true);
 
-    // Small timeout to simulate "fluid" check and ensure state is stable
-    setTimeout(() => {
-      const cleanName = name.trim().toUpperCase();
-      const cleanPass = password.trim();
+    const cleanName = name.trim().toUpperCase();
+    const cleanPass = password.trim();
 
-      const user = users.find(u => 
-        u.name.trim().toUpperCase() === cleanName && 
-        u.code.trim() === cleanPass
-      );
+    const user = users.find(u => 
+      u.name.trim().toUpperCase() === cleanName && 
+      u.code.trim() === cleanPass
+    );
 
-      if (user) {
-        onLogin(user);
-      } else {
-        setError("Nom ou code d'accès incorrect.");
-        setIsLoggingIn(false);
-      }
-    }, 300);
+    if (user) {
+      onLogin(user);
+    } else {
+      setError("Nom ou code d'accès incorrect.");
+      setIsLoggingIn(false);
+    }
   };
 
   return (

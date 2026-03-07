@@ -4,9 +4,11 @@ interface SettingsModalProps {
   onClose: () => void;
   fleets: { id: string; name: string }[];
   setFleets: (fleets: { id: string; name: string }[]) => void;
+  storageMode: string;
+  onSyncToCloud: () => void;
 }
 
-export default function SettingsModal({ onClose, fleets, setFleets }: SettingsModalProps) {
+export default function SettingsModal({ onClose, fleets, setFleets, storageMode, onSyncToCloud }: SettingsModalProps) {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [newFleetName, setNewFleetName] = useState("");
@@ -112,6 +114,28 @@ export default function SettingsModal({ onClose, fleets, setFleets }: SettingsMo
 
         {/* Content */}
         <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20, overflowY: "auto" }}>
+          
+          {storageMode === "local" && (
+            <div style={{ background: "#fff1f2", padding: 16, borderRadius: 8, border: "1px solid #fecdd3" }}>
+              <h3 style={{ margin: "0 0 8px 0", fontSize: 15, fontWeight: 700, color: "#9f1239" }}>
+                ☁️ Migration vers le Cloud
+              </h3>
+              <p style={{ margin: 0, fontSize: 13, color: "#881337", lineHeight: 1.5 }}>
+                Vous êtes actuellement en <strong>Mode Local</strong>. Vos données ne sont pas sauvegardées en ligne. 
+                Si vous avez configuré Firebase, cliquez ci-dessous pour envoyer vos données vers le cloud.
+              </p>
+              <button
+                onClick={onSyncToCloud}
+                style={{
+                  marginTop: 12, padding: "10px 16px", background: "#e11d48", color: "#fff",
+                  border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 8, fontSize: 14
+                }}
+              >
+                🚀 Envoyer vers le Cloud
+              </button>
+            </div>
+          )}
           
           <div style={{ background: "#f0fdf4", padding: 16, borderRadius: 8, border: "1px solid #bbf7d0" }}>
             <h3 style={{ margin: "0 0 12px 0", fontSize: 15, fontWeight: 700, color: "#166534" }}>
