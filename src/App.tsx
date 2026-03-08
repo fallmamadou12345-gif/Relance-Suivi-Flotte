@@ -14,7 +14,7 @@ import GoldTab from "./components/GoldTab";
 import ZoneBadge from "./components/ZoneBadge";
 
 import { db } from "./firebase";
-import { collection, doc, setDoc, getDocs, onSnapshot, query, limit, orderBy } from "firebase/firestore";
+import { collection, doc, setDoc, deleteDoc, getDocs, onSnapshot, query, limit, orderBy } from "firebase/firestore";
 
 const PER_PAGE = 30;
 
@@ -114,11 +114,18 @@ export default function App() {
               setDrivers(fbDrivers);
               setStorageMode("cloud");
             } else {
-              // If empty, we are in cloud mode but with no data, OR we fallback to local until sync
-              // But to allow sync, we must be "active".
-              // Let's keep storageMode as local if empty, to prompt the "Migration" UI,
-              // but firebaseActive must be true to allow the button to work.
+              // If empty, we are in cloud mode but with no data.
+              // Fallback to local storage if available (unsynced data)
               setStorageMode("local");
+              window.storage.get("flotte_drivers").then(local => {
+                if (local && local.value) {
+                  try {
+                    setDrivers(JSON.parse(local.value));
+                  } catch (e) {
+                    console.error("Failed to parse local drivers", e);
+                  }
+                }
+              });
             }
           }, (err) => {
             console.error("Drivers listener error", err);
@@ -201,22 +208,19 @@ export default function App() {
     };
   }, []);
 
-  // SAVE to Firebase
-  useEffect(() => {
-    if (!firebaseActive || !storageReady) return;
-    const sync = async () => {
-      try {
-        // Sync drivers (chunked or individual)
-        // For simplicity in this demo, we sync individual docs that changed
-        // But here we just sync the whole collection if it's small enough
-        for (const d of drivers) {
-          await setDoc(doc(db, "drivers", d.id), d);
-        }
-      } catch (e) { console.error("Firebase sync error:", e); }
-    };
-    const t = setTimeout(sync, 5000);
-    return () => clearTimeout(t);
-  }, [drivers, firebaseActive, storageReady]);
+  // SAVE to Firebase - REMOVED (Handled by individual actions now)
+  // useEffect(() => {
+  //   if (!firebaseActive || !storageReady) return;
+  //   const sync = async () => {
+  //     try {
+  //       for (const d of drivers) {
+  //         await setDoc(doc(db, "drivers", d.id), d);
+  //       }
+  //     } catch (e) { console.error("Firebase sync error:", e); }
+  //   };
+  //   const t = setTimeout(sync, 5000);
+  //   return () => clearTimeout(t);
+  // }, [drivers, firebaseActive, storageReady]);
 
   // SAVE sessions & logs & fleets
   useEffect(() => {
@@ -423,7 +427,14 @@ export default function App() {
 
     setCurrentAgent(agent);
     setTotalCalls(c => c + 1);
-    setDrivers(ds => ds.map(d => d.id === driverId ? { ...d, _called: true, _callCount: newCount, _callLog: [...d._callLog, entry], commentaire: comment || d.commentaire } : d));
+    
+    const updatedDriver = { ...driver, _called: true, _callCount: newCount, _callLog: [...driver._callLog, entry], commentaire: comment || driver.commentaire };
+    setDrivers(ds => ds.map(d => d.id === driverId ? updatedDriver : d));
+    
+    // Auto-save to Firebase
+    if (firebaseActive) {
+      setDoc(doc(db, "drivers", driver.id), updatedDriver).catch(console.error);
+    }
 
     const ev = { id: Date.now() + Math.random(), driverNom: driver.nom, count: newCount, agent, time: now };
     setToasts(t => [...t, ev]);
@@ -436,8 +447,17 @@ export default function App() {
   }, []);
 
   const onComment = useCallback((id: string, comment: string) => {
-    setDrivers(ds => ds.map(d => d.id === id ? { ...d, commentaire: comment } : d));
-  }, []);
+    setDrivers(ds => ds.map(d => {
+      if (d.id === id) {
+        const updated = { ...d, commentaire: comment };
+        if (firebaseActive) {
+          setDoc(doc(db, "drivers", id), updated).catch(console.error);
+        }
+        return updated;
+      }
+      return d;
+    }));
+  }, [firebaseActive]);
 
   const handleFileUpload = (e: any) => {
     if (currentFleetId === "ALL") {
@@ -635,6 +655,20 @@ export default function App() {
           await window.storage.set("flotte_recruits", JSON.stringify(updatedRecruits));
           await window.storage.set("flotte_reactivated", JSON.stringify(updatedReactivations));
           await window.storage.set("flotte_dl_snapshot", JSON.stringify(newSnapshot));
+          
+          // AUTO CLOUD SAVE
+          if (firebaseActive) {
+            setToasts(prev => [...prev, { id: Date.now(), message: "Sauvegarde Cloud automatique...", type: "info" }]);
+            // Sync drivers in chunks to avoid blocking UI too much
+            const chunkSize = 50;
+            for (let i = 0; i < finalDrivers.length; i += chunkSize) {
+              const chunk = finalDrivers.slice(i, i + chunkSize);
+              await Promise.all(chunk.map(d => setDoc(doc(db, "drivers", d.id), d)));
+            }
+            setStorageMode("cloud");
+            setToasts(prev => [...prev, { id: Date.now(), message: "Sauvegarde Cloud terminée !", type: "success" }]);
+          }
+
         } catch (e) {
           console.error("Failed to save after import", e);
           setToasts(prev => [...prev, { id: Date.now(), message: "Erreur de sauvegarde automatique !", type: "error" }]);
@@ -1507,6 +1541,12 @@ Cellule de Relance Yango`}
                           // Force immediate save
                           window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(console.error);
                           
+                          // AUTO CLOUD SAVE
+                          if (firebaseActive) {
+                            const userId = cleanNewUser.id || cleanNewUser.name.replace(/\s/g, "_");
+                            setDoc(doc(db, "users", userId), cleanNewUser).catch(console.error);
+                          }
+                          
                           setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
                           alert(editingIndex !== null ? "Utilisateur modifié !" : `Utilisateur ${cleanNewUser.name} ajouté !`);
                         } else {
@@ -1560,6 +1600,13 @@ Cellule de Relance Yango`}
                                   const newUsers = users.filter((_, idx) => idx !== i);
                                   setUsers(newUsers);
                                   window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
+                                  
+                                  // AUTO CLOUD DELETE
+                                  if (firebaseActive) {
+                                    const userId = u.id || u.name.replace(/\s/g, "_");
+                                    deleteDoc(doc(db, "users", userId)).catch(console.error);
+                                  }
+
                                   if (editingIndex === i) {
                                     setEditingIndex(null);
                                     setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
