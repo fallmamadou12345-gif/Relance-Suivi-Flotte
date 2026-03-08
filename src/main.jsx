@@ -1,9 +1,25 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './FlotteApp.jsx'
+import App from './App.tsx'
+import './index.css'
+
+// Polyfill for window.storage
+window.storage = {
+  mode: "local",
+  get: async (key) => {
+    const value = localStorage.getItem(key);
+    return value ? { value } : null;
+  },
+  set: async (key, value) => {
+    localStorage.setItem(key, value);
+  },
+  delete: async (key) => {
+    localStorage.removeItem(key);
+  }
+};
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-<React.StrictMode>
-<App />
-</React.StrictMode>,
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
 )

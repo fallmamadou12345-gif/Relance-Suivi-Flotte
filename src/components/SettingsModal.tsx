@@ -2,8 +2,8 @@ import React, { useState, useRef } from 'react';
 
 interface SettingsModalProps {
   onClose: () => void;
-  fleets: { id: string; name: string }[];
-  setFleets: (fleets: { id: string; name: string }[]) => void;
+  fleets: { id: string; name: string; phone?: string }[];
+  setFleets: (fleets: { id: string; name: string; phone?: string }[]) => void;
   storageMode: string;
   onSyncToCloud: () => void;
 }
