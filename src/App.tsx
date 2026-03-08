@@ -14,7 +14,7 @@ import GoldTab from "./components/GoldTab";
 import ZoneBadge from "./components/ZoneBadge";
 
 import { db } from "./firebase";
-import { collection, doc, setDoc, deleteDoc, getDocs, onSnapshot, query, limit, orderBy } from "firebase/firestore";
+import { collection, doc, setDoc, deleteDoc, addDoc, writeBatch, getDocs, onSnapshot, query, limit, orderBy } from "firebase/firestore";
 
 const PER_PAGE = 30;
 
@@ -79,6 +79,7 @@ export default function App() {
     let unsubDrivers: any;
     let unsubUsers: any;
     let unsubLogs: any;
+    let unsubSettings: any;
 
     (async () => {
       setLoadingUsers(true);
@@ -149,6 +150,19 @@ export default function App() {
             }
           });
 
+          unsubSettings = onSnapshot(collection(db, "settings"), (snap) => {
+            snap.forEach(doc => {
+              const d = doc.data();
+              if (doc.id === "sessions") setAgentSessions(d.data || {});
+              if (doc.id === "recruits") setRecruits(d.data || {});
+              if (doc.id === "reactivations") setReactivations(d.list || []);
+              if (doc.id === "history") setImportHistory(d.list || []);
+              if (doc.id === "snapshot") setLastCommandSnapshot(d.data || {});
+              if (doc.id === "fleets") setFleets(d.list || INITIAL_FLEETS);
+              if (doc.id === "stats") setTotalCalls(d.totalCalls || 0);
+            });
+          });
+
         } catch (e) {
           console.error("Firebase setup error:", e);
           setStorageMode("local");
@@ -159,43 +173,45 @@ export default function App() {
         setLoadingUsers(false);
       }
 
-      // 3. Load other static data
-      try {
-        const savedFleets = await window.storage.get("flotte_fleets");
-        if (savedFleets && savedFleets.value) {
-          setFleets(JSON.parse(savedFleets.value));
-        }
-      } catch (e) { }
+      // 3. Load other static data (Fallback if Firebase not active or empty)
+      if (!isFirebaseConfigured) {
+        try {
+          const savedFleets = await window.storage.get("flotte_fleets");
+          if (savedFleets && savedFleets.value) {
+            setFleets(JSON.parse(savedFleets.value));
+          }
+        } catch (e) { }
 
-      try {
-        const hist = await window.storage.get("flotte_history");
-        if (hist && hist.value) setImportHistory(JSON.parse(hist.value));
-      } catch (e) { }
+        try {
+          const hist = await window.storage.get("flotte_history");
+          if (hist && hist.value) setImportHistory(JSON.parse(hist.value));
+        } catch (e) { }
 
-      try {
-        const sess = await window.storage.get("flotte_sessions");
-        if (sess && sess.value) setAgentSessions(JSON.parse(sess.value));
-      } catch (e) { }
+        try {
+          const sess = await window.storage.get("flotte_sessions");
+          if (sess && sess.value) setAgentSessions(JSON.parse(sess.value));
+        } catch (e) { }
 
-      try {
-        const tc = await window.storage.get("flotte_totalcalls");
-        if (tc && tc.value) setTotalCalls(parseInt(tc.value) || 0);
-      } catch (e) { }
+        try {
+          const tc = await window.storage.get("flotte_totalcalls");
+          if (tc && tc.value) setTotalCalls(parseInt(tc.value) || 0);
+        } catch (e) { }
 
-      try {
-        const rec = await window.storage.get("flotte_recruits");
-        if (rec && rec.value) setRecruits(JSON.parse(rec.value));
-      } catch (e) { }
+        try {
+          const rec = await window.storage.get("flotte_recruits");
+          if (rec && rec.value) setRecruits(JSON.parse(rec.value));
+        } catch (e) { }
 
-      try {
-        const react = await window.storage.get("flotte_reactivated");
-        if (react && react.value) setReactivations(JSON.parse(react.value));
-      } catch (e) { }
+        try {
+          const react = await window.storage.get("flotte_reactivated");
+          if (react && react.value) setReactivations(JSON.parse(react.value));
+        } catch (e) { }
 
-      try {
-        const snap = await window.storage.get("flotte_dl_snapshot");
-        if (snap && snap.value) setLastCommandSnapshot(JSON.parse(snap.value));
-      } catch (e) { }
+        try {
+          const snap = await window.storage.get("flotte_dl_snapshot");
+          if (snap && snap.value) setLastCommandSnapshot(JSON.parse(snap.value));
+        } catch (e) { }
+      }
 
       setStorageReady(true);
       if (!isFirebaseConfigured) setStorageMode(window.storage.mode);
@@ -205,6 +221,7 @@ export default function App() {
       if (unsubDrivers) unsubDrivers();
       if (unsubUsers) unsubUsers();
       if (unsubLogs) unsubLogs();
+      if (unsubSettings) unsubSettings();
     };
   }, []);
 
@@ -233,10 +250,25 @@ export default function App() {
       try { await window.storage.set("flotte_reactivated", JSON.stringify(reactivations)); } catch (e) { }
       try { await window.storage.set("flotte_dl_snapshot", JSON.stringify(lastCommandSnapshot)); } catch (e) { }
       try { await window.storage.set("flotte_fleets", JSON.stringify(fleets)); } catch (e) { }
+      try { await window.storage.set("flotte_totalcalls", totalCalls.toString()); } catch (e) { }
+      try { await window.storage.set("flotte_history", JSON.stringify(importHistory)); } catch (e) { }
+
+      // Firebase Sync
+      if (firebaseActive) {
+        try {
+          await setDoc(doc(db, "settings", "sessions"), { data: agentSessions });
+          await setDoc(doc(db, "settings", "recruits"), { data: recruits });
+          await setDoc(doc(db, "settings", "reactivations"), { list: reactivations });
+          await setDoc(doc(db, "settings", "snapshot"), { data: lastCommandSnapshot });
+          await setDoc(doc(db, "settings", "fleets"), { list: fleets });
+          await setDoc(doc(db, "settings", "stats"), { totalCalls });
+          await setDoc(doc(db, "settings", "history"), { list: importHistory });
+        } catch (e) { console.error("Firebase settings sync error", e); }
+      }
     };
     const t = setTimeout(save, 2000);
     return () => clearTimeout(t);
-  }, [agentSessions, globalLogs, users, recruits, fleets, storageReady]);
+  }, [agentSessions, globalLogs, users, recruits, fleets, storageReady, firebaseActive, reactivations, lastCommandSnapshot, totalCalls, importHistory]);
 
   // Update current session time every minute
   useEffect(() => {
@@ -418,12 +450,19 @@ export default function App() {
     }));
 
     // Add to global log
-    setGlobalLogs(l => [{ 
+    const logEntry = { 
       time: new Date().toISOString(), 
       agent, 
       action: "CALL", 
       details: `Appel ${driver.nom} (${outcome})` 
-    }, ...l].slice(0, 500));
+    };
+    
+    setGlobalLogs(l => [logEntry, ...l].slice(0, 500));
+
+    // Auto-save log to Firebase
+    if (firebaseActive) {
+      addDoc(collection(db, "logs"), logEntry).catch(console.error);
+    }
 
     setCurrentAgent(agent);
     setTotalCalls(c => c + 1);
@@ -659,14 +698,26 @@ export default function App() {
           // AUTO CLOUD SAVE
           if (firebaseActive) {
             setToasts(prev => [...prev, { id: Date.now(), message: "Sauvegarde Cloud automatique...", type: "info" }]);
-            // Sync drivers in chunks to avoid blocking UI too much
-            const chunkSize = 50;
+            
+            // Sync metadata
+            await setDoc(doc(db, "settings", "history"), { list: newHist });
+            await setDoc(doc(db, "settings", "recruits"), { data: updatedRecruits });
+            await setDoc(doc(db, "settings", "reactivations"), { list: updatedReactivations });
+            await setDoc(doc(db, "settings", "snapshot"), { data: newSnapshot });
+
+            // Sync drivers in chunks using writeBatch for speed
+            const chunkSize = 400; // Firestore batch limit is 500
             for (let i = 0; i < finalDrivers.length; i += chunkSize) {
               const chunk = finalDrivers.slice(i, i + chunkSize);
-              await Promise.all(chunk.map(d => setDoc(doc(db, "drivers", d.id), d)));
+              const batch = writeBatch(db);
+              chunk.forEach(d => {
+                const ref = doc(db, "drivers", d.id);
+                batch.set(ref, d);
+              });
+              await batch.commit();
             }
             setStorageMode("cloud");
-            setToasts(prev => [...prev, { id: Date.now(), message: "Sauvegarde Cloud terminée !", type: "success" }]);
+            setToasts(prev => [...prev, { id: Date.now(), message: "Sauvegarde Cloud terminée (Mode Rapide) !", type: "success" }]);
           }
 
         } catch (e) {
