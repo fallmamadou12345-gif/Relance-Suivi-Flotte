@@ -108,16 +108,21 @@ export default function App() {
       if (isFirebaseConfigured) {
         try {
           unsubDrivers = onSnapshot(collection(db, "drivers"), (snap) => {
+            setFirebaseActive(true); // Firebase is connected even if empty
             if (!snap.empty) {
               const fbDrivers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
               setDrivers(fbDrivers);
-              setFirebaseActive(true);
               setStorageMode("cloud");
             } else {
+              // If empty, we are in cloud mode but with no data, OR we fallback to local until sync
+              // But to allow sync, we must be "active".
+              // Let's keep storageMode as local if empty, to prompt the "Migration" UI,
+              // but firebaseActive must be true to allow the button to work.
               setStorageMode("local");
             }
           }, (err) => {
             console.error("Drivers listener error", err);
+            setFirebaseActive(false);
             setStorageMode("local");
           });
 
