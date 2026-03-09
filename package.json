@@ -7,23 +7,24 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "vite preview --port $PORT --host 0.0.0.0"
+    "start": "serve -s dist -p $PORT"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
     "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^18.2.56",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
     "firebase": "^10.8.0",
     "lucide-react": "^0.344.0",
     "motion": "^12.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.13.1",
+    "serve": "^14.2.6",
     "tailwindcss": "^4.0.0",
-    "vite-plugin-pwa": "^0.19.0",
-    "@types/react": "^18.2.56",
-    "@types/react-dom": "^18.2.19",
-    "@vitejs/plugin-react": "^4.2.1",
     "typescript": "^5.2.2",
-    "vite": "^5.1.4"
+    "vite": "^5.1.4",
+    "vite-plugin-pwa": "^0.19.0"
   }
 }
