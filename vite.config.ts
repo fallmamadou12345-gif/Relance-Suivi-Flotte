@@ -52,7 +52,7 @@ export default defineConfig(({mode}) => {
       },
     },
     preview: {
-      allowedHosts: true,
+      allowedHosts: ['relance-suivi-flotte-1.onrender.com', true],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
