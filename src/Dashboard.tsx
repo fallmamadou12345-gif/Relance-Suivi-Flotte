@@ -8,7 +8,6 @@ import AgentModal from "./components/AgentModal";
 import WhatsAppModal from "./components/WhatsAppModal";
 import DriverRow from "./components/DriverRow";
 import Toast from "./components/Toast";
-import LoginModal from "./components/LoginModal";
 import SettingsModal from "./components/SettingsModal";
 import GoldTab from "./components/GoldTab";
 import ZoneBadge from "./components/ZoneBadge";
@@ -20,7 +19,7 @@ import { signOut } from "firebase/auth";
 const PER_PAGE = 30;
 
 export default function Dashboard({ user }: { user?: any }) {
-  const companyId = user?.uid || "default_company";
+  const companyId = "flotte_pro_main";
   
   const getCompanyCollection = (path: string) => collection(db, "companies", companyId, path);
   const getCompanyDoc = (path: string, id: string) => doc(db, "companies", companyId, path, id);
@@ -34,13 +33,7 @@ export default function Dashboard({ user }: { user?: any }) {
   const [userRole, setUserRole] = useState<"SUPER_ADMIN" | "ADMIN_PARC" | "AGENT" | null>(null);
   const [currentUserFleets, setCurrentUserFleets] = useState<string[]>([]);
   const [currentUserCustomRole, setCurrentUserCustomRole] = useState<string>("");
-  const [users, setUsers] = useState<any[]>([
-    { name: "SUPER ADMIN", code: "super123", role: "SUPER_ADMIN", allowedFleets: [], customRole: "Directeur Général" },
-    { name: "ADMIN_DIAGNE", code: "diagne", role: "ADMIN_PARC", allowedFleets: ["diagne"], customRole: "Responsable Parc Diagne" },
-    { name: "ADMIN_NDONGO", code: "ndongo", role: "ADMIN_PARC", allowedFleets: ["ndongo"], customRole: "Responsable Parc Ndongo" },
-    { name: "ADMIN_SY", code: "sy123", role: "ADMIN_PARC", allowedFleets: ["sy"], customRole: "Responsable Parc Sy" },
-    { name: "AGENT", code: "1234", role: "AGENT", allowedFleets: [], customRole: "Agent Support" }
-  ]);
+  const [users, setUsers] = useState<any[]>([]);
   const [agentSessionStart, setAgentSessionStart] = useState<number | null>(null);
   const [agentSessions, setAgentSessions] = useState<any>({}); // { agent: { totalTime: ms, calls: number } }
   const [globalLogs, setGlobalLogs] = useState<any[]>([]); // { time, agent, action, details }
@@ -67,11 +60,53 @@ export default function Dashboard({ user }: { user?: any }) {
   // Fleet Management
   const [fleets, setFleets] = useState<{ id: string; name: string; phone?: string }[]>(INITIAL_FLEETS);
   const [currentFleetId, setCurrentFleetId] = useState<string>("ALL"); // "ALL" or specific fleet ID
-  const [newUser, setNewUser] = useState({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] as string[] });
+  const [newUser, setNewUser] = useState({ email: "", name: "", role: "AGENT", customRole: "", allowedFleets: [] as string[] });
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   const driversRef = useRef(drivers);
   driversRef.current = drivers;
+
+  const currentUserDoc = useMemo(() => {
+    return users.find(u => u.email === user?.email);
+  }, [users, user]);
+
+  useEffect(() => {
+    if (!loadingUsers && user && firebaseActive) {
+      if (!currentUserDoc) {
+        // Auto-create user doc if not exists
+        const isSuperAdmin = user.email === "fallmamadou12345@gmail.com";
+        const newUserDoc = {
+          id: user.uid,
+          email: user.email,
+          name: user.displayName || user.email.split('@')[0],
+          role: isSuperAdmin ? "SUPER_ADMIN" : "AGENT",
+          status: isSuperAdmin ? "approved" : "pending",
+          allowedFleets: [],
+          customRole: isSuperAdmin ? "Directeur Général" : "Agent Support",
+          createdAt: new Date().toISOString()
+        };
+        setDoc(getCompanyDoc("users", user.uid), newUserDoc).catch(console.error);
+      } else if (currentUserDoc.status === "approved" && !currentAgent) {
+        // Auto-login if approved
+        setCurrentAgent(currentUserDoc.name);
+        setUserRole(currentUserDoc.role);
+        setCurrentUserFleets(currentUserDoc.allowedFleets || []);
+        setCurrentUserCustomRole(currentUserDoc.customRole || "");
+        
+        if (currentUserDoc.role !== "SUPER_ADMIN" && currentUserDoc.allowedFleets?.length > 0) {
+          setCurrentFleetId(currentUserDoc.allowedFleets[0]);
+        } else if (currentUserDoc.role === "SUPER_ADMIN") {
+          setCurrentFleetId("ALL");
+        }
+        
+        const sessionStart = Date.now();
+        setAgentSessionStart(sessionStart);
+        
+        // Log login
+        setGlobalLogs(l => [{ time: new Date().toISOString(), agent: currentUserDoc.name, action: "LOGIN", details: `Connexion (${currentUserDoc.role})` }, ...l].slice(0, 500));
+      }
+    }
+  }, [loadingUsers, user, firebaseActive, currentUserDoc, currentAgent]);
 
   // Filter drivers by fleet for stats and display
   // const fleetDrivers = useMemo(() => {
@@ -394,45 +429,6 @@ export default function Dashboard({ user }: { user?: any }) {
   const handleCallClick = useCallback((driverId: string) => {
     setModal({ driverId });
   }, []);
-
-  const handleLogin = (user: any) => {
-    setCurrentAgent(user.name);
-    setUserRole(user.role);
-    const allowed = user.allowedFleets || [];
-    setCurrentUserFleets(allowed);
-    setCurrentUserCustomRole(user.customRole || "");
-    
-    // Set default fleet to first allowed if not super admin
-    if (user.role !== "SUPER_ADMIN" && allowed.length > 0) {
-      setCurrentFleetId(allowed[0]);
-    } else if (user.role === "SUPER_ADMIN") {
-      setCurrentFleetId("ALL");
-    }
-
-    const sessionStart = Date.now();
-    setAgentSessionStart(sessionStart);
-
-    // Persist session
-    window.storage.set("flotte_session_data", JSON.stringify({
-      name: user.name,
-      role: user.role,
-      allowedFleets: allowed,
-      customRole: user.customRole || "",
-      sessionStart
-    })).catch(() => {});
-
-    setAgentSessions((prev: any) => ({
-      ...prev,
-      [user.name]: {
-        ...prev[user.name],
-        lastLogin: new Date().toISOString(),
-        totalTime: prev[user.name]?.totalTime || 0,
-        calls: prev[user.name]?.calls || 0
-      }
-    }));
-    // Log login
-    setGlobalLogs(l => [{ time: new Date().toISOString(), agent: user.name, action: "LOGIN", details: `Connexion (${user.role})` }, ...l].slice(0, 500));
-  };
 
   const handleConfirm = useCallback(({ agent, comment, outcome }: any) => {
     if (!modal) return;
@@ -771,8 +767,46 @@ export default function Dashboard({ user }: { user?: any }) {
   const modalDriver = modal ? driversRef.current.find(d => d.id === modal.driverId) : null;
   const waDriver = waModal ? driversRef.current.find(d => d.id === waModal.driverId) : null;
 
+  if (loadingUsers || !firebaseActive) {
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-indigo-600">Chargement des accès...</div>;
+  }
+
+  if (!currentUserDoc || currentUserDoc.status === "pending") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans">
+        <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-slate-100 text-center">
+          <div className="text-4xl mb-4">⏳</div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Compte en attente</h2>
+          <p className="text-slate-500 mb-6">
+            Votre compte est en attente de validation par l'administrateur. Vous recevrez un accès une fois approuvé.
+          </p>
+          <button onClick={() => signOut(auth)} className="text-indigo-600 font-medium hover:text-indigo-700">
+            Se déconnecter
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentUserDoc.status === "rejected") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans">
+        <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-slate-100 text-center">
+          <div className="text-4xl mb-4">⛔</div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Accès refusé</h2>
+          <p className="text-slate-500 mb-6">
+            Votre demande d'accès a été refusée par l'administrateur.
+          </p>
+          <button onClick={() => signOut(auth)} className="text-indigo-600 font-medium hover:text-indigo-700">
+            Se déconnecter
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentAgent) {
-    return <LoginModal users={users} onLogin={handleLogin} loading={loadingUsers} />;
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-indigo-600">Initialisation de la session...</div>;
   }
 
   return (
@@ -1518,16 +1552,16 @@ Cellule de Relance Yango`}
                         value={newUser.name || ""}
                         onChange={e => setNewUser({...newUser, name: e.target.value.toUpperCase()})}
                         style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
+                        disabled
                       />
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Code d'accès</label>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>Email</label>
                       <input 
                         type="text" 
-                        placeholder="Ex: 0000" 
-                        value={newUser.code || ""}
-                        onChange={e => setNewUser({...newUser, code: e.target.value})}
-                        style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
+                        value={newUser.email || ""}
+                        style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14, background: "#f3f4f6" }}
+                        disabled
                       />
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1581,7 +1615,7 @@ Cellule de Relance Yango`}
                     {editingIndex !== null && (
                       <button 
                         onClick={() => {
-                          setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
+                          setNewUser({ email: "", name: "", role: "AGENT", customRole: "", allowedFleets: [] });
                           setEditingIndex(null);
                         }}
                         style={{ padding: "10px 24px", background: "#9ca3af", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
@@ -1591,7 +1625,7 @@ Cellule de Relance Yango`}
                     )}
                     <button 
                       onClick={() => {
-                        if (newUser.name && newUser.code) {
+                        if (newUser.name) {
                           const cleanNewUser = { ...newUser, name: newUser.name.trim().toUpperCase() };
                           let newUsers;
                           if (editingIndex !== null) {
@@ -1604,8 +1638,6 @@ Cellule de Relance Yango`}
                             newUsers = [...users, cleanNewUser];
                           }
                           setUsers(newUsers);
-                          // Force immediate save
-                          window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(console.error);
                           
                           // AUTO CLOUD SAVE
                           if (firebaseActive) {
@@ -1613,15 +1645,16 @@ Cellule de Relance Yango`}
                             setDoc(getCompanyDoc("users", userId), cleanNewUser).catch(console.error);
                           }
                           
-                          setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
+                          setNewUser({ email: "", name: "", role: "AGENT", customRole: "", allowedFleets: [] });
                           alert(editingIndex !== null ? "Utilisateur modifié !" : `Utilisateur ${cleanNewUser.name} ajouté !`);
                         } else {
-                          alert("Nom et Code requis !");
+                          alert("Nom requis !");
                         }
                       }}
                       style={{ padding: "10px 24px", background: editingIndex !== null ? "#1d4ed8" : "#d97706", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}
+                      disabled={editingIndex === null}
                     >
-                      {editingIndex !== null ? "Mettre à jour" : "Ajouter l'utilisateur"}
+                      {editingIndex !== null ? "Mettre à jour" : "Sélectionnez un utilisateur à modifier"}
                     </button>
                   </div>
                 </div>
@@ -1645,45 +1678,81 @@ Cellule de Relance Yango`}
                             {u.role === "SUPER_ADMIN" ? "🛡️" : u.role === "ADMIN_PARC" ? "🏢" : "👤"} {u.name}
                           </div>
                           {u.customRole && <div style={{ fontSize: 12, color: "#4b5563", fontStyle: "italic" }}>{u.customRole}</div>}
-                          <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace", marginTop: 2 }}>Code: {u.code}</div>
+                          <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace", marginTop: 2 }}>{u.email}</div>
+                          <div style={{ marginTop: 4 }}>
+                            {u.status === "pending" && <span style={{ fontSize: 11, background: "#fef08a", color: "#854d0e", padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>⏳ En attente</span>}
+                            {u.status === "approved" && <span style={{ fontSize: 11, background: "#bbf7d0", color: "#166534", padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>✅ Approuvé</span>}
+                            {u.status === "rejected" && <span style={{ fontSize: 11, background: "#fecaca", color: "#991b1b", padding: "2px 6px", borderRadius: 4, fontWeight: 700 }}>⛔ Refusé</span>}
+                          </div>
                         </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button 
-                            onClick={() => {
-                              setNewUser({ ...u, allowedFleets: u.allowedFleets || [] });
-                              setEditingIndex(i);
-                              // Scroll to form
-                              document.getElementById("user-form")?.scrollIntoView({ behavior: "smooth" });
-                            }}
-                            style={{ border: "none", background: "#dbeafe", color: "#1d4ed8", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
-                          >
-                            Modifier
-                          </button>
-                          {users.length > 1 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            {u.status === "pending" && (
+                              <>
+                                <button 
+                                  onClick={() => {
+                                    const newU = { ...u, status: "approved" };
+                                    if (firebaseActive) {
+                                      const userId = u.id || u.name.replace(/\s/g, "_");
+                                      setDoc(getCompanyDoc("users", userId), newU).catch(console.error);
+                                    }
+                                  }}
+                                  style={{ border: "none", background: "#22c55e", color: "#fff", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                                >
+                                  Approuver
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    const newU = { ...u, status: "rejected" };
+                                    if (firebaseActive) {
+                                      const userId = u.id || u.name.replace(/\s/g, "_");
+                                      setDoc(getCompanyDoc("users", userId), newU).catch(console.error);
+                                    }
+                                  }}
+                                  style={{ border: "none", background: "#ef4444", color: "#fff", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                                >
+                                  Rejeter
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          <div style={{ display: "flex", gap: 6 }}>
                             <button 
                               onClick={() => {
-                                if (window.confirm(`Supprimer l'accès pour ${u.name} ?`)) {
-                                  const newUsers = users.filter((_, idx) => idx !== i);
-                                  setUsers(newUsers);
-                                  window.storage.set("flotte_users", JSON.stringify(newUsers)).catch(() => {});
-                                  
-                                  // AUTO CLOUD DELETE
-                                  if (firebaseActive) {
-                                    const userId = u.id || u.name.replace(/\s/g, "_");
-                                    deleteDoc(getCompanyDoc("users", userId)).catch(console.error);
-                                  }
-
-                                  if (editingIndex === i) {
-                                    setEditingIndex(null);
-                                    setNewUser({ name: "", code: "", role: "AGENT", customRole: "", allowedFleets: [] });
-                                  }
-                                }
+                                setNewUser({ ...u, allowedFleets: u.allowedFleets || [] });
+                                setEditingIndex(i);
+                                // Scroll to form
+                                document.getElementById("user-form")?.scrollIntoView({ behavior: "smooth" });
                               }}
-                              style={{ border: "none", background: "#fee2e2", color: "#b91c1c", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                              style={{ border: "none", background: "#dbeafe", color: "#1d4ed8", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
                             >
-                              Supprimer
+                              Modifier
                             </button>
-                          )}
+                            {users.length > 1 && u.email !== "fallmamadou12345@gmail.com" && (
+                              <button 
+                                onClick={() => {
+                                  if (window.confirm(`Supprimer l'accès pour ${u.name} ?`)) {
+                                    const newUsers = users.filter((_, idx) => idx !== i);
+                                    setUsers(newUsers);
+                                    
+                                    // AUTO CLOUD DELETE
+                                    if (firebaseActive) {
+                                      const userId = u.id || u.name.replace(/\s/g, "_");
+                                      deleteDoc(getCompanyDoc("users", userId)).catch(console.error);
+                                    }
+
+                                    if (editingIndex === i) {
+                                      setEditingIndex(null);
+                                      setNewUser({ email: "", name: "", role: "AGENT", customRole: "", allowedFleets: [] });
+                                    }
+                                  }
+                                }}
+                                style={{ border: "none", background: "#fee2e2", color: "#b91c1c", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}
+                              >
+                                Supprimer
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                       
