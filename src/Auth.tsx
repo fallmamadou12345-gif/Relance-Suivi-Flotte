@@ -21,7 +21,8 @@ export default function Auth() {
       if (err.code === 'auth/popup-closed-by-user') {
         setError('La fenêtre de connexion a été fermée avant la fin.');
       } else {
-        setError('Erreur lors de la connexion avec Google. Veuillez réessayer.');
+        // Affiche l'erreur exacte de Firebase pour aider au débogage
+        setError(`Erreur Firebase (${err.code}): ${err.message}`);
       }
     }
   };
